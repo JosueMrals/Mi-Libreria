@@ -1,0 +1,1218 @@
+# FASE 2 — IDENTITY, SECURITY, RBAC Y AUDITORÍA
+
+## Sistema de Inventario y Ventas para Librerías
+
+Continuamos el desarrollo del proyecto iniciado en la Fase 1.
+
+La Fase 1 creó la infraestructura base utilizando:
+
+* Firebase
+* Firebase Authentication
+* Firebase SQL Connect
+* Cloud SQL for PostgreSQL
+* PostgreSQL
+* Firebase CLI
+* TypeScript
+* SQL Connect Emulator cuando corresponda
+
+La arquitectura objetivo continúa siendo:
+
+React Native Mobile
+↓
+Firebase Authentication
+↓
+Firebase SQL Connect
+↓
+Cloud SQL PostgreSQL
+
+React + Tauri Desktop
+↓
+Firebase Authentication
+↓
+Firebase SQL Connect
+↓
+Cloud SQL PostgreSQL
+
+---
+
+# REGLA FUNDAMENTAL: GIT
+
+NO realizar ninguna operación Git.
+
+Yo gestionaré personalmente:
+
+* git init
+* git add
+* git commit
+* git push
+* git pull
+* git branch
+* git checkout
+* git merge
+* git rebase
+* git reset
+* git stash
+* git tag
+
+NO crear commits.
+
+NO crear ramas.
+
+NO hacer push.
+
+NO hacer pull.
+
+Si alguna operación Git es recomendable, solamente indicarla al final.
+
+---
+
+# 1. OBJETIVO
+
+Implementar la primera versión real de:
+
+* Identidad.
+* Usuarios.
+* Roles.
+* Permisos.
+* Sucursales.
+* Autorización.
+* Seguridad.
+* Auditoría.
+
+Firebase Authentication será responsable de la identidad.
+
+PostgreSQL será responsable de los datos de negocio relacionados con usuarios, roles, permisos y organización.
+
+Firebase SQL Connect será responsable de exponer las operaciones autorizadas.
+
+---
+
+# 2. NO CREAR BACKEND PARA AUTH
+
+NO crear:
+
+* ASP.NET Identity.
+* Custom JWT authentication.
+* Password hashing propio.
+* Login API propia.
+* Refresh token API propia.
+* Auth service propio.
+
+Firebase Authentication será la autoridad de identidad.
+
+No duplicar innecesariamente el sistema de autenticación.
+
+---
+
+# 3. MODELO DE IDENTIDAD
+
+Separar claramente:
+
+IDENTIDAD
+
+de
+
+PERFIL DE APLICACIÓN.
+
+Firebase Authentication proporciona:
+
+* uid
+* email
+* authentication provider
+* authentication state
+
+PostgreSQL almacenará información de aplicación como:
+
+UserProfile
+Role
+Permission
+UserRole
+Branch
+UserBranch
+
+La relación principal será:
+
+Firebase Auth User
+↓
+firebaseUid
+↓
+UserProfile
+
+---
+
+# 4. USER PROFILE
+
+Crear entidad:
+
+UserProfile
+
+Campos recomendados:
+
+* id
+* firebaseUid
+* email
+* firstName
+* lastName
+* displayName
+* phone
+* status
+* createdAt
+* updatedAt
+* lastLoginAt
+
+Utilizar un identificador interno PostgreSQL además del firebaseUid cuando sea apropiado.
+
+firebaseUid debe tener una restricción UNIQUE.
+
+No permitir que un cliente cree arbitrariamente un UserProfile asociado a otro firebaseUid.
+
+El firebaseUid utilizado para operaciones protegidas debe obtenerse de la identidad autenticada.
+
+---
+
+# 5. USER STATUS
+
+Definir estados:
+
+ACTIVE
+INACTIVE
+SUSPENDED
+
+Un usuario INACTIVE o SUSPENDED no debe poder ejecutar operaciones protegidas de la aplicación aunque todavía exista en Firebase Authentication.
+
+La lógica de autorización debe considerar este estado.
+
+---
+
+# 6. ROLES
+
+Crear:
+
+Role
+
+Roles iniciales:
+
+SUPER_ADMIN
+ADMIN
+MANAGER
+CASHIER
+INVENTORY
+SELLER
+AUDITOR
+
+El sistema debe estar preparado para agregar roles posteriormente sin modificar código de forma innecesaria.
+
+No asumir que solamente existirán estos roles.
+
+---
+
+# 7. PERMISSIONS
+
+Crear:
+
+Permission
+
+Permisos iniciales:
+
+products.read
+products.create
+products.update
+products.delete
+
+sales.read
+sales.create
+sales.cancel
+
+inventory.read
+inventory.adjust
+
+purchases.read
+purchases.create
+purchases.update
+
+customers.read
+customers.create
+customers.update
+
+suppliers.read
+suppliers.create
+suppliers.update
+
+reports.read
+
+users.read
+users.create
+users.update
+users.disable
+
+branches.read
+branches.create
+branches.update
+
+cash.read
+cash.open
+cash.close
+
+audit.read
+
+permissions.manage
+
+roles.manage
+
+---
+
+# 8. ROLE-PERMISSION
+
+Crear relación:
+
+RolePermission
+
+Relación:
+
+Role
+↓
+RolePermission
+↓
+Permission
+
+Un rol puede tener múltiples permisos.
+
+Un permiso puede pertenecer a múltiples roles.
+
+Utilizar restricciones de integridad apropiadas.
+
+Evitar duplicados.
+
+---
+
+# 9. USER-ROLE
+
+Crear:
+
+UserRole
+
+Relación:
+
+UserProfile
+↓
+UserRole
+↓
+Role
+
+Un usuario puede tener uno o varios roles si la arquitectura lo requiere.
+
+No asumir que un usuario solamente tendrá un role.
+
+---
+
+# 10. SUPER ADMIN
+
+SUPER_ADMIN debe representar el nivel máximo de administración de la aplicación.
+
+Sin embargo:
+
+NO implementar bypasses inseguros como:
+
+if role == SUPER_ADMIN
+allow everything
+
+La autorización debe seguir una política explícita.
+
+Si SUPER_ADMIN posee todos los permisos, esto debe estar representado mediante la relación RolePermission o mediante una estrategia de autorización documentada.
+
+No ocultar reglas críticas en código.
+
+---
+
+# 11. BRANCHES
+
+Crear:
+
+Branch
+
+Campos iniciales:
+
+* id
+* name
+* code
+* address
+* phone
+* status
+* createdAt
+* updatedAt
+
+Status:
+
+ACTIVE
+INACTIVE
+
+El code debe ser UNIQUE.
+
+---
+
+# 12. USER-BRANCH
+
+Crear:
+
+UserBranch
+
+Relación:
+
+UserProfile
+↓
+UserBranch
+↓
+Branch
+
+Esto permitirá posteriormente:
+
+Usuario A
+→ Branch Norte
+
+Usuario B
+→ Branch Central
+→ Branch Norte
+
+SUPER_ADMIN
+→ todas las sucursales mediante una política explícita
+
+---
+
+# 13. BRANCH AUTHORIZATION
+
+Este punto es CRÍTICO.
+
+Nunca confiar en:
+
+branchId enviado por el cliente.
+
+Ejemplo de petición maliciosa:
+
+{
+"branchId": "BRANCH-CENTRAL"
+}
+
+Si el usuario pertenece solamente a:
+
+BRANCH-NORTE
+
+la operación debe ser rechazada.
+
+La autorización debe verificar la relación real:
+
+Authenticated User
+↓
+UserProfile
+↓
+UserBranch
+↓
+Branch
+
+antes de permitir operaciones sobre una sucursal.
+
+---
+
+# 14. AUTHORIZATION MODEL
+
+Implementar conceptualmente:
+
+User
+↓
+Roles
+↓
+Permissions
+↓
+Branch Scope
+
+Una operación debe poder comprobar:
+
+1. ¿El usuario está autenticado?
+2. ¿El usuario está activo?
+3. ¿Tiene el permiso necesario?
+4. ¿Tiene acceso a la sucursal solicitada?
+5. ¿La sucursal está activa?
+
+Todas estas validaciones deben ocurrir antes de permitir operaciones protegidas.
+
+---
+
+# 15. FIREBASE SQL CONNECT AUTHORIZATION
+
+Utilizar los mecanismos oficiales actuales de Firebase SQL Connect para autorización.
+
+No inventar un sistema paralelo.
+
+Utilizar la información del usuario autenticado disponible para SQL Connect.
+
+Cuando sea apropiado, utilizar:
+
+* Firebase Auth UID.
+* auth context.
+* Authorization expressions.
+* Custom claims solamente cuando realmente sean necesarios.
+
+No duplicar toda la matriz de permisos dentro de Firebase Custom Claims si puede mantenerse correctamente en PostgreSQL.
+
+---
+
+# 16. CUSTOM CLAIMS
+
+No utilizar Custom Claims como fuente principal de permisos de negocio.
+
+Pueden utilizarse posteriormente para información pequeña y estable, pero:
+
+Roles y permissions de negocio deberán permanecer principalmente en PostgreSQL.
+
+Motivo:
+
+* Pueden cambiar.
+* Pueden ser numerosos.
+* Requieren administración.
+* No queremos depender de sincronización manual de claims.
+
+Si se considera necesario utilizar Custom Claims para alguna función específica, documentar exactamente por qué.
+
+---
+
+# 17. AUTHENTICATION FLOWS
+
+Preparar Firebase Authentication para:
+
+* Email/password.
+* Email verification.
+* Password reset.
+
+Dejar preparada la arquitectura para:
+
+* MFA.
+* Passkeys.
+* Google/Apple/etc. posteriormente.
+
+NO crear UI de login todavía.
+
+---
+
+# 18. USER CREATION
+
+Definir claramente dos conceptos:
+
+Firebase Authentication User
+
+y
+
+Application UserProfile.
+
+Cuando posteriormente se cree un usuario desde el panel administrativo:
+
+1. Crear identidad Firebase.
+2. Crear UserProfile.
+3. Asignar Role.
+4. Asignar Branch.
+5. Registrar AuditLog.
+
+La operación debe diseñarse para evitar usuarios huérfanos.
+
+Documentar el problema de consistencia entre Firebase Authentication y PostgreSQL y cómo se resolverá.
+
+No crear todavía un sistema administrativo completo de usuarios.
+
+---
+
+# 19. USER DELETION
+
+NO implementar eliminación física de usuarios.
+
+Utilizar:
+
+INACTIVE
+o
+SUSPENDED
+
+Los usuarios deben conservarse para auditoría histórica.
+
+Por ejemplo:
+
+Una venta realizada por:
+
+userId = 123
+
+debe seguir mostrando correctamente el usuario histórico aunque posteriormente sea desactivado.
+
+---
+
+# 20. PASSWORD SECURITY
+
+La aplicación NO debe almacenar passwords.
+
+Firebase Authentication gestiona:
+
+* Password hashing.
+* Password verification.
+* Password reset.
+
+Nunca almacenar passwords en PostgreSQL.
+
+Nunca registrar passwords en logs.
+
+---
+
+# 21. SESSION SECURITY
+
+Preparar la arquitectura para:
+
+* Access token.
+* Token refresh.
+* Session revocation.
+* Logout.
+* Device sessions.
+
+No almacenar tokens en PostgreSQL salvo que una funcionalidad concreta lo requiera.
+
+No registrar tokens en logs.
+
+---
+
+# 22. MOBILE TOKEN STORAGE
+
+Aunque la app móvil se implementará posteriormente:
+
+documentar que los tokens/sesiones deben utilizar mecanismos de almacenamiento seguro del sistema operativo.
+
+No utilizar AsyncStorage como almacenamiento principal para secretos sensibles.
+
+Para React Native considerar posteriormente:
+
+* Android Keystore.
+* iOS Keychain.
+* Secure storage library apropiada.
+
+No implementar todavía React Native.
+
+---
+
+# 23. AUDIT LOG
+
+Implementar ahora la estructura real de:
+
+AuditLog
+
+Campos recomendados:
+
+* id
+* userId
+* branchId
+* action
+* entityType
+* entityId
+* timestamp
+* correlationId
+* ipAddress
+* userAgent
+* metadata
+
+Evaluar qué campos deben ser opcionales.
+
+---
+
+# 24. AUDIT ACTIONS
+
+Preparar acciones:
+
+AUTH_LOGIN
+AUTH_LOGIN_FAILED
+AUTH_LOGOUT
+
+USER_CREATED
+USER_UPDATED
+USER_DISABLED
+USER_SUSPENDED
+
+ROLE_CREATED
+ROLE_UPDATED
+ROLE_ASSIGNED
+ROLE_REMOVED
+
+PERMISSION_ASSIGNED
+PERMISSION_REMOVED
+
+BRANCH_CREATED
+BRANCH_UPDATED
+
+SECURITY_ACCESS_DENIED
+
+---
+
+# 25. AUDIT IMMUTABILITY
+
+AuditLog debe ser append-only.
+
+No permitir:
+
+UPDATE AuditLog
+DELETE AuditLog
+
+desde operaciones normales de la aplicación.
+
+Los eventos históricos no deben poder modificarse mediante el cliente.
+
+Si posteriormente se necesita retención/eliminación legal de logs, deberá existir un proceso administrativo separado y documentado.
+
+---
+
+# 26. AUDIT SECURITY
+
+Un usuario normal NO puede consultar AuditLog.
+
+Solamente usuarios con:
+
+audit.read
+
+podrán consultar auditoría.
+
+Incluso ADMIN no debe obtener acceso implícito si no tiene el permiso correspondiente.
+
+---
+
+# 27. SECURITY EVENTS
+
+Registrar eventos relevantes.
+
+Ejemplos:
+
+LOGIN
+FAILED_LOGIN
+ACCESS_DENIED
+USER_DISABLED
+ROLE_CHANGED
+BRANCH_ACCESS_DENIED
+
+No registrar información sensible.
+
+Nunca registrar:
+
+* Password.
+* Access token.
+* Refresh token.
+* Secret.
+* Credential.
+
+---
+
+# 28. RATE LIMITING / ABUSE
+
+Mantener protección contra abuso.
+
+Authentication brute force será gestionado principalmente por Firebase Authentication.
+
+Para operaciones SQL Connect:
+
+Aplicar los mecanismos de protección disponibles.
+
+No implementar rate limiting artificial dentro de cada query.
+
+Documentar límites y controles que proporciona Firebase.
+
+---
+
+# 29. DATA INTEGRITY
+
+Crear constraints PostgreSQL apropiadas:
+
+* PRIMARY KEY
+* FOREIGN KEY
+* UNIQUE
+* NOT NULL
+* CHECK
+
+Ejemplos:
+
+firebaseUid UNIQUE
+
+branch.code UNIQUE
+
+Role.name UNIQUE
+
+Permission.name UNIQUE
+
+UserRole(userId, roleId) UNIQUE
+
+RolePermission(roleId, permissionId) UNIQUE
+
+UserBranch(userId, branchId) UNIQUE
+
+---
+
+# 30. ENUMS / STATUS
+
+Evitar strings arbitrarios cuando una enumeración PostgreSQL o constraint sea apropiada.
+
+Estados importantes deben tener valores controlados.
+
+No permitir:
+
+status = "whatever"
+
+---
+
+# 31. SECURITY TESTS
+
+Crear pruebas que comprueben como mínimo:
+
+### Authentication
+
+Usuario no autenticado:
+→ DENIED
+
+Usuario autenticado:
+→ puede acceder a operaciones permitidas.
+
+### User status
+
+ACTIVE:
+→ permitido.
+
+INACTIVE:
+→ denegado.
+
+SUSPENDED:
+→ denegado.
+
+### Permissions
+
+Usuario con:
+
+products.read
+
+→ puede consultar productos.
+
+Usuario sin:
+
+products.read
+
+→ denegado.
+
+### Branch
+
+Usuario asignado a Branch A:
+
+→ puede acceder Branch A.
+
+→ NO puede acceder Branch B.
+
+### Audit
+
+Usuario sin audit.read:
+
+→ NO puede consultar AuditLog.
+
+Usuario con audit.read:
+
+→ puede consultar AuditLog.
+
+---
+
+# 32. AUTHORIZATION TEST MATRIX
+
+Crear documentación:
+
+docs/authorization-matrix.md
+
+Con una tabla:
+
+Role | Permission | Scope
+
+No asignar permisos arbitrariamente.
+
+Documentar explícitamente la matriz inicial.
+
+La matriz puede modificarse posteriormente.
+
+---
+
+# 33. SECURITY DOCUMENTATION
+
+Actualizar:
+
+docs/security.md
+
+Debe documentar:
+
+* Firebase Authentication.
+* Firebase SQL Connect.
+* PostgreSQL.
+* User identity.
+* Roles.
+* Permissions.
+* Branch scopes.
+* Audit.
+* Secrets.
+* Token handling.
+* Security boundaries.
+* Threat considerations.
+
+---
+
+# 34. THREAT MODEL
+
+Crear:
+
+docs/threat-model.md
+
+Analizar al menos:
+
+1. Usuario manipula branchId.
+2. Usuario manipula userId.
+3. Usuario intenta acceder a otro usuario.
+4. Usuario intenta elevar permisos.
+5. Usuario intenta modificar role.
+6. Usuario intenta acceder a AuditLog.
+7. Usuario deshabilitado intenta operar.
+8. Usuario intenta acceder sin autenticación.
+9. Usuario intenta enviar datos inválidos.
+10. Cliente comprometido intenta ejecutar operaciones no autorizadas.
+
+Para cada amenaza documentar:
+
+Threat
+Impact
+Mitigation
+
+---
+
+# 35. NO TRUST CLIENT
+
+Regla absoluta:
+
+El cliente nunca es una autoridad.
+
+No confiar en:
+
+userId
+role
+permission
+branchId
+createdBy
+updatedBy
+
+enviados por Mobile/Desktop.
+
+El servidor debe obtener la identidad desde la sesión autenticada y validar los permisos.
+
+---
+
+# 36. CREATED BY / UPDATED BY
+
+Preparar el modelo para que posteriormente campos como:
+
+createdBy
+updatedBy
+
+se obtengan de la identidad autenticada.
+
+Nunca:
+
+createdBy = request.body.createdBy
+
+Debe determinarse desde la sesión autenticada.
+
+---
+
+# 37. CORRELATION ID
+
+Las operaciones protegidas deben poder relacionarse mediante:
+
+correlationId / traceId
+
+Esto permitirá posteriormente conectar:
+
+Mobile
+↓
+Firebase
+↓
+SQL Connect
+↓
+PostgreSQL
+↓
+AuditLog
+
+cuando corresponda.
+
+---
+
+# 38. DATABASE ACCESS
+
+No exponer PostgreSQL directamente a:
+
+* Mobile.
+* Desktop.
+* Internet.
+
+El acceso será:
+
+Client
+↓
+Firebase Authentication
+↓
+Firebase SQL Connect
+↓
+Cloud SQL PostgreSQL
+
+---
+
+# 39. SERVICE ACCOUNTS
+
+No colocar credenciales administrativas de Firebase en:
+
+* Mobile.
+* Desktop.
+* Git repository.
+
+Cualquier credencial administrativa debe permanecer exclusivamente en un entorno confiable.
+
+---
+
+# 40. LOCAL DEVELOPMENT
+
+Utilizar los emuladores oficiales cuando estén disponibles.
+
+Crear una forma reproducible de probar:
+
+* Authentication.
+* SQL Connect.
+* Authorization.
+* PostgreSQL/PGlite.
+* Queries.
+* Mutations.
+
+No depender de producción para pruebas.
+
+---
+
+# 41. TEST DATA
+
+Crear únicamente datos de prueba.
+
+Por ejemplo:
+
+SUPER_ADMIN
+ADMIN
+MANAGER
+CASHIER
+INVENTORY
+SELLER
+AUDITOR
+
+Crear:
+
+Branch A
+Branch B
+
+Crear usuarios de prueba con diferentes permisos.
+
+No utilizar cuentas personales reales.
+
+---
+
+# 42. NO MOBILE UI
+
+No crear todavía:
+
+* LoginScreen.
+* Dashboard.
+* Navigation.
+* Product screens.
+* Sales screens.
+
+Eso pertenece a una fase posterior.
+
+---
+
+# 43. NO DESKTOP UI
+
+No crear todavía:
+
+* Login window.
+* Dashboard.
+* User management UI.
+* Product UI.
+
+Eso pertenece a una fase posterior.
+
+---
+
+# 44. NO INVENTORY
+
+No implementar todavía:
+
+* Product CRUD.
+* Inventory.
+* Sales.
+* Purchases.
+* Customers.
+* Suppliers.
+
+Solamente crear las bases de seguridad necesarias para esas funcionalidades.
+
+---
+
+# 45. SECURITY PRINCIPLES
+
+Aplicar:
+
+* Least privilege.
+* Defense in depth.
+* Zero trust client.
+* Explicit authorization.
+* Secure defaults.
+* Fail closed.
+* Auditability.
+* Data minimization.
+
+Si una autorización no puede verificarse:
+
+DENY.
+
+No permitir acceso por defecto.
+
+---
+
+# 46. DEPLOYMENT
+
+NO realizar deployment a producción.
+
+NO ejecutar:
+
+firebase deploy
+
+automáticamente.
+
+Preparar los archivos y comandos necesarios.
+
+Al final indicar exactamente qué comando debo ejecutar manualmente.
+
+---
+
+# 47. GIT
+
+NO realizar operaciones Git.
+
+Al finalizar solamente mostrar:
+
+Suggested Git checkpoint
+
+y una lista de los archivos modificados/agregados.
+
+Yo realizaré manualmente:
+
+git status
+git add
+git commit
+git push
+
+---
+
+# 48. VALIDACIÓN
+
+Antes de finalizar:
+
+1. Validar schema.
+2. Validar migrations/deployment configuration.
+3. Validar queries.
+4. Validar mutations.
+5. Validar authentication.
+6. Validar authorization.
+7. Ejecutar tests.
+8. Probar Branch isolation.
+9. Probar Permission isolation.
+10. Probar User status.
+11. Probar Audit access.
+12. Revisar secretos.
+13. Revisar logs.
+14. Revisar documentación.
+
+Corregir errores antes de finalizar.
+
+---
+
+# 49. NO AVANZAR A FASE 3
+
+Al terminar esta fase:
+
+DETENERSE.
+
+No comenzar automáticamente:
+
+* Products.
+* Categories.
+* Suppliers.
+* Inventory.
+* Sales.
+
+Eso será Fase 3.
+
+---
+
+# 50. RESULTADO FINAL
+
+Al finalizar quiero tener:
+
+Identity
+↓
+Firebase Authentication
+
+Application Identity
+↓
+UserProfile
+
+Authorization
+↓
+Role
+↓
+Permission
+
+Organization
+↓
+Branch
+↓
+UserBranch
+
+Auditing
+↓
+AuditLog
+
+Y una arquitectura capaz de soportar:
+
+User
+↓
+Role
+↓
+Permission
+↓
+Branch Scope
+↓
+Business Operation
+
+sin confiar en información enviada por el cliente.
+
+Finalmente proporciona:
+
+1. Archivos creados/modificados.
+2. Modelo de datos.
+3. Relaciones.
+4. Authorization model.
+5. Permission matrix.
+6. Security decisions.
+7. Tests ejecutados.
+8. Resultados de tests.
+9. Comandos que debo ejecutar manualmente.
+10. Suggested Git checkpoint.
+11. Riesgos pendientes.
+12. Qué se implementará en Fase 3.
+
+NO ejecutar Git.
+NO hacer deploy de producción.
+NO crear Mobile.
+NO crear Desktop.
+NO implementar inventario.
+NO implementar ventas.
+DETENERSE.

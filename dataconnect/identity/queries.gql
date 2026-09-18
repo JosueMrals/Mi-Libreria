@@ -1,0 +1,193 @@
+# Identity / RBAC / Branches / Audit — queries.
+#
+# Notas de plataforma confirmadas contra el emulador (Firebase CLI 15.30.1):
+# - "key:" en una lookup singular solo acepta la primary key real de la tabla (UserProfile.id,
+#   Role.id, etc.). firebaseUid es @unique pero NO es la key de la tabla, asi que la busqueda
+#   por auth.uid se hace con el campo plural + "where": userProfiles(where: { firebaseUid: {
+#   eq_expr: "auth.uid" } }). Devuelve 0 o 1 filas (unicidad garantizada por el @unique).
+# - Las relaciones inversas se llaman "<plural>_on_<campo>", no el nombre del campo a secas:
+#   UserRole.userProfile -> "userRoles_on_userProfile" en UserProfile.
+#   UserBranch.userProfile -> "userBranches_on_userProfile" en UserProfile.
+#   RolePermission.role -> "rolePermissions_on_role" en Role.
+#
+# Patron de autorizacion para lecturas administrativas (ListUsers, ListBranches,
+# ListAuditLogs): se resuelve el propio UserProfile via auth.uid y se aplica @check con
+# ".exists()" sobre UserRole -> Role -> RolePermission -> Permission, exigiendo al menos un
+# permiso concreto. SUPER_ADMIN no tiene ningun atajo en el codigo: su autoridad total viene
+# exclusivamente de tener asignados todos los RolePermission (ver seed_identity_data.gql).
+
+# ---------- Self-service (auth.uid), sin permiso adicional ----------
+#
+# Fase 2.1 (hardening): "sin permiso adicional" NO significa "sin verificar status". Toda
+# operacion de aplicacion protegida exige status == 'ACTIVE' del UserProfile resuelto por
+# auth.uid (nunca enviado por el cliente); "this.exists(u, ...)" ya deniega tambien el caso de
+# un usuario autenticado en Firebase sin UserProfile todavia (lista vacia -> exists = false ->
+# fail closed). Ver docs/security.md y docs/threat-model.md.
+
+query GetMyProfile @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    id
+    firebaseUid
+    email
+    firstName
+    lastName
+    displayName
+    phone
+    status
+    createdAt
+    updatedAt
+    lastLoginAt
+  }
+}
+
+query ListMyRoles @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+    userRoles_on_userProfile {
+      role {
+        id
+        name
+        description
+      }
+    }
+  }
+}
+
+query ListMyPermissions @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+    userRoles_on_userProfile {
+      role {
+        name
+        rolePermissions_on_role {
+          permission {
+            id
+            name
+          }
+        }
+      }
+    }
+  }
+}
+
+query ListMyBranches @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+    userBranches_on_userProfile {
+      branch {
+        id
+        name
+        code
+        status
+      }
+    }
+  }
+}
+
+# ---------- Catalogo (cualquier usuario ACTIVE autenticado) ----------
+# Enumerar nombres de roles/permisos no expone datos de negocio ni de otros usuarios; no
+# existe "roles.read"/"permissions.read" en la matriz (seccion 7 de la Fase 2), por eso solo
+# se exige sesion activa y no un permiso especifico. Documentado en docs/security.md.
+
+query ListRoles @auth(level: USER) {
+  roles {
+    id
+    name
+    description
+  }
+}
+
+query ListPermissions @auth(level: USER) {
+  permissions {
+    id
+    name
+    description
+  }
+}
+
+# ---------- Administrativas (permiso explicito vía @check) ----------
+
+query ListUsers @auth(level: USER) {
+  callerCheck: userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.read'))"
+    message: "Requiere permiso users.read"
+  ) {
+    status
+    roles_via_UserRole {
+      permissions_via_RolePermission {
+        name
+      }
+    }
+  }
+  userProfiles {
+    id
+    firebaseUid
+    email
+    firstName
+    lastName
+    status
+    createdAt
+    lastLoginAt
+  }
+}
+
+query ListBranches @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'branches.read'))"
+    message: "Requiere permiso branches.read"
+  ) {
+    status
+    roles_via_UserRole {
+      permissions_via_RolePermission {
+        name
+      }
+    }
+  }
+  branches {
+    id
+    name
+    code
+    address
+    phone
+    status
+  }
+}
+
+query ListAuditLogs($limit: Int = 50) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'audit.read'))"
+    message: "Requiere permiso audit.read"
+  ) {
+    status
+    roles_via_UserRole {
+      permissions_via_RolePermission {
+        name
+      }
+    }
+  }
+  auditLogs(orderBy: { timestamp: DESC }, limit: $limit) {
+    id
+    performedByUid
+    action
+    entityType
+    entityId
+    timestamp
+    correlationId
+    branch {
+      id
+      code
+    }
+  }
+}

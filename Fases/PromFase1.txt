@@ -1,0 +1,893 @@
+# FASE 1 — ARQUITECTURA BASE
+
+## Sistema de Inventario y Ventas para Librerías
+
+Quiero construir un sistema profesional de inventario y ventas para librerías.
+
+El sistema estará compuesto inicialmente por:
+
+1. Aplicación móvil Android/iOS.
+2. Aplicación Desktop para Windows.
+3. Firebase Authentication.
+4. Firebase SQL Connect.
+5. Cloud SQL for PostgreSQL.
+6. SDKs tipados generados por Firebase SQL Connect.
+
+La base de datos principal será PostgreSQL administrada mediante Cloud SQL y conectada a la aplicación mediante Firebase SQL Connect.
+
+---
+
+# REGLA FUNDAMENTAL: GIT
+
+NO debes realizar ninguna operación de Git.
+
+Yo gestionaré personalmente absolutamente todo lo relacionado con Git.
+
+NO ejecutar:
+
+* git init
+* git add
+* git commit
+* git push
+* git pull
+* git checkout
+* git branch
+* git merge
+* git rebase
+* git reset
+* git stash
+* git tag
+* git clone
+
+NO crear commits.
+
+NO modificar configuración de Git.
+
+NO crear ramas.
+
+NO hacer push.
+
+NO hacer pull.
+
+NO asumir responsabilidad sobre el repositorio.
+
+Puedes crear y modificar archivos del proyecto, pero la gestión de Git será exclusivamente manual por mi parte.
+
+Si consideras que debería realizar alguna operación Git, solamente indícala al final como recomendación. No la ejecutes.
+
+---
+
+# 1. OBJETIVO DE ESTA FASE
+
+Esta fase tiene como objetivo preparar exclusivamente la infraestructura y arquitectura inicial del proyecto.
+
+NO implementar todavía:
+
+* Productos completos.
+* Ventas.
+* Compras.
+* Clientes.
+* Inventario funcional.
+* Reportes.
+* Dashboard.
+* Mobile UI.
+* Desktop UI.
+* Barcode scanner.
+* Impresoras.
+
+Primero quiero una base limpia y profesional.
+
+---
+
+# 2. STACK
+
+Utilizar:
+
+## Backend/Data
+
+* Firebase
+* Firebase Authentication
+* Firebase SQL Connect
+* Cloud SQL for PostgreSQL
+* PostgreSQL
+* GraphQL mediante Firebase SQL Connect
+* Firebase CLI
+
+## Desarrollo
+
+* TypeScript cuando sea necesario.
+* Node.js únicamente para herramientas/scripts requeridos por Firebase.
+* Firebase Emulator / SQL Connect Emulator cuando sea compatible.
+
+## Mobile
+
+La aplicación móvil se implementará posteriormente con:
+
+* React Native
+* TypeScript
+
+NO crear todavía la aplicación móvil.
+
+## Desktop
+
+La aplicación Desktop se implementará posteriormente con:
+
+* React
+* TypeScript
+* Tauri
+
+NO crear todavía la aplicación Desktop.
+
+---
+
+# 3. IMPORTANTE: NO UTILIZAR ASP.NET CORE EN ESTA FASE
+
+No crear:
+
+* ASP.NET Core.
+* Entity Framework Core.
+* Npgsql.
+* Controllers.
+* Clean Architecture de backend .NET.
+* Dockerfile para API .NET.
+* API REST propia.
+
+La capa de backend/data de este proyecto utilizará inicialmente Firebase SQL Connect.
+
+No crear una segunda API innecesaria.
+
+---
+
+# 4. ARQUITECTURA
+
+La arquitectura objetivo inicial será:
+
+Mobile
+↓
+Firebase Authentication
+↓
+Firebase SQL Connect
+↓
+Cloud SQL PostgreSQL
+
+Desktop
+↓
+Firebase Authentication
+↓
+Firebase SQL Connect
+↓
+Cloud SQL PostgreSQL
+
+Firebase SQL Connect será responsable de exponer operaciones de datos definidas mediante schemas, queries y mutations.
+
+Los clientes no deben conectarse directamente a PostgreSQL.
+
+---
+
+# 5. FIREBASE
+
+Preparar el proyecto para Firebase.
+
+Utilizar Firebase CLI.
+
+Inicializar SQL Connect mediante la configuración oficial.
+
+La estructura debe seguir las convenciones actuales de Firebase SQL Connect.
+
+Utilizar:
+
+dataconnect/
+
+para:
+
+* Schema.
+* Queries.
+* Mutations.
+* Connectors.
+* Configuración relacionada.
+
+No inventar una estructura incompatible con Firebase SQL Connect.
+
+Consultar la documentación oficial si alguna configuración ha cambiado.
+
+---
+
+# 6. CLOUD SQL POSTGRESQL
+
+Utilizar:
+
+Cloud SQL for PostgreSQL
+
+como base de datos persistente.
+
+No crear un PostgreSQL local como reemplazo de Cloud SQL salvo que Firebase SQL Connect requiera un emulador para desarrollo.
+
+Para desarrollo local utilizar el mecanismo oficial de Firebase SQL Connect Emulator cuando sea apropiado.
+
+Firebase SQL Connect permite utilizar un entorno local con una base de datos PGlite para prototipado y pruebas.
+
+---
+
+# 7. CONFIGURACIÓN FIREBASE
+
+Preparar correctamente:
+
+* firebase.json
+* configuración de SQL Connect
+* dataconnect.yaml
+* estructura dataconnect/
+
+No inventar nombres de propiedades.
+
+Utilizar la Firebase CLI actual.
+
+Si algún comando ha cambiado respecto a versiones anteriores, utilizar la sintaxis actualmente soportada por Firebase.
+
+---
+
+# 8. FIREBASE AUTHENTICATION
+
+Preparar Firebase Authentication.
+
+Los métodos iniciales previstos son:
+
+* Email/password.
+
+La arquitectura debe quedar preparada posteriormente para:
+
+* MFA.
+* Passkeys.
+* Recuperación de contraseña.
+* Verificación de email.
+* Revocación de sesiones.
+* Control de usuarios.
+
+NO crear todavía la interfaz de Login.
+
+---
+
+# 9. AUTORIZACIÓN
+
+Firebase Authentication identifica al usuario.
+
+Firebase SQL Connect debe utilizar sus mecanismos oficiales de autenticación/autorización.
+
+Preparar la arquitectura para:
+
+Roles:
+
+SUPER_ADMIN
+ADMIN
+MANAGER
+CASHIER
+INVENTORY
+SELLER
+AUDITOR
+
+Y permissions:
+
+products.read
+products.create
+products.update
+products.delete
+
+sales.read
+sales.create
+sales.cancel
+
+inventory.read
+inventory.adjust
+
+reports.read
+
+users.read
+users.create
+users.update
+users.disable
+
+No confiar jamás en un role enviado directamente desde el cliente.
+
+Las operaciones de SQL Connect deben utilizar reglas de autorización apropiadas.
+
+Cuando se creen queries y mutations, utilizar las directivas de autenticación/autorización de SQL Connect según corresponda.
+
+---
+
+# 10. DATABASE MODEL — SOLO BASE
+
+Todavía NO implementar toda la lógica de inventario y ventas.
+
+Sin embargo, quiero preparar conceptualmente el modelo para futuras fases.
+
+Entidades futuras:
+
+User
+Role
+Permission
+Branch
+Product
+Category
+Brand
+Supplier
+Customer
+Inventory
+InventoryMovement
+Purchase
+PurchaseItem
+Sale
+SaleItem
+Payment
+CashRegister
+AuditLog
+
+En esta fase NO implementar todas estas entidades.
+
+Únicamente crear las estructuras necesarias para validar que:
+
+Firebase SQL Connect
+↓
+PostgreSQL
+↓
+Authentication/Authorization
+
+funcionan correctamente.
+
+---
+
+# 11. PRIMER MODELO DE PRUEBA
+
+Crear un modelo mínimo de prueba, por ejemplo:
+
+TestEntity
+
+con:
+
+* id
+* name
+* createdAt
+
+La finalidad es comprobar:
+
+1. Schema.
+2. PostgreSQL.
+3. Query.
+4. Mutation.
+5. Authentication.
+6. Authorization.
+7. Generated SDK.
+8. Emulator.
+9. Deployment.
+
+No convertir esta entidad en parte del dominio final.
+
+Si es más apropiado utilizar una entidad de dominio real como Category para validar la infraestructura, puede utilizarse Category.
+
+---
+
+# 12. SQL CONNECT
+
+Utilizar la arquitectura oficial:
+
+Schema
+↓
+Queries
+↓
+Mutations
+↓
+Connectors
+↓
+Generated SDK
+↓
+Mobile/Desktop
+
+Las queries y mutations deben estar definidas en archivos versionables.
+
+No escribir consultas SQL directamente desde el cliente.
+
+No permitir que el cliente envíe SQL arbitrario.
+
+SQL Connect debe controlar las operaciones permitidas.
+
+---
+
+# 13. SECURITY
+
+La seguridad es una prioridad máxima.
+
+Aplicar:
+
+* Firebase Authentication.
+* SQL Connect authorization.
+* Least privilege.
+* Validación de entrada.
+* Operaciones explícitas.
+* No SQL arbitrario desde clientes.
+* No credenciales PostgreSQL en clientes.
+* No passwords de PostgreSQL en código.
+* No secretos en el repositorio.
+* No service account credentials en mobile.
+* No service account credentials en Desktop.
+
+Nunca almacenar credenciales administrativas de Firebase dentro de:
+
+React Native
+Desktop
+JavaScript
+TypeScript
+
+---
+
+# 14. FIREBASE CLIENT SECURITY
+
+Los clientes solamente deben tener acceso a las operaciones explícitamente permitidas.
+
+No generar una API genérica tipo:
+
+createAnything()
+updateAnything()
+deleteAnything()
+
+Las operaciones deben representar casos de uso concretos.
+
+Ejemplos futuros:
+
+createProduct
+updateProduct
+createSale
+cancelSale
+adjustInventory
+openCashRegister
+closeCashRegister
+
+---
+
+# 15. INVENTORY SECURITY
+
+Aunque todavía no implementaremos inventario, la arquitectura debe permitir posteriormente que:
+
+Un usuario pueda tener acceso solamente a una sucursal.
+
+Ejemplo:
+
+User
+↓
+Branch
+↓
+Inventory
+
+Un usuario de Branch A no debe poder consultar o modificar inventario de Branch B simplemente modificando un branchId en el cliente.
+
+La autorización debe validarse en SQL Connect/backend.
+
+---
+
+# 16. AUDIT
+
+Preparar conceptualmente AuditLog.
+
+Debe poder registrar posteriormente:
+
+* userId
+* action
+* entity
+* entityId
+* timestamp
+* branchId
+* correlationId
+* metadata
+
+Eventos futuros:
+
+LOGIN
+FAILED_LOGIN
+CREATE_USER
+UPDATE_USER
+DISABLE_USER
+CREATE_PRODUCT
+UPDATE_PRODUCT
+CREATE_SALE
+CANCEL_SALE
+ADJUST_INVENTORY
+OPEN_CASH_REGISTER
+CLOSE_CASH_REGISTER
+
+No implementar todavía todo el sistema de auditoría.
+
+---
+
+# 17. MONEY
+
+Cuando se creen posteriormente entidades financieras:
+
+NO utilizar:
+
+float
+double
+
+Utilizar tipos apropiados para PostgreSQL y TypeScript.
+
+Para PostgreSQL utilizar tipos NUMERIC/DECIMAL apropiados.
+
+Los cálculos monetarios deben ser deterministas.
+
+---
+
+# 18. DATES
+
+Almacenar timestamps de forma consistente.
+
+Preferir UTC para almacenamiento.
+
+La conversión a timezone local se realizará en los clientes.
+
+---
+
+# 19. TRANSACTIONS
+
+La arquitectura debe permitir posteriormente operaciones transaccionales.
+
+Ejemplo futuro:
+
+CREATE SALE
+
+Debe poder realizar:
+
+1. Crear venta.
+2. Crear SaleItems.
+3. Registrar Payment.
+4. Crear InventoryMovements.
+
+como una operación consistente.
+
+Firebase SQL Connect soporta mutations de múltiples pasos y transacciones. Tener esto en cuenta para el diseño futuro.
+
+---
+
+# 20. OFFLINE — PREPARACIÓN
+
+NO implementar todavía el sistema offline.
+
+Pero la arquitectura debe permitir posteriormente:
+
+Mobile
+↓
+Local SQLite
+↓
+Sync Queue
+↓
+SQL Connect
+
+Preparar documentación sobre cómo se manejarán posteriormente:
+
+* Idempotency.
+* Sync.
+* Retry.
+* Conflict resolution.
+* Offline operations.
+
+No implementar todavía.
+
+---
+
+# 21. LOCAL DEVELOPMENT
+
+Configurar el entorno local utilizando las herramientas oficiales de Firebase SQL Connect.
+
+El proyecto debe poder:
+
+* Ejecutar emulator.
+* Crear/probar schema.
+* Ejecutar queries.
+* Ejecutar mutations.
+* Generar SDKs.
+* Probar autenticación cuando el emulator lo permita.
+
+Documentar exactamente los comandos necesarios.
+
+---
+
+# 22. GENERATED SDK
+
+Preparar la generación de SDKs tipados.
+
+Los clientes futuros deberán utilizar los SDKs generados por SQL Connect siempre que sea apropiado.
+
+NO escribir manualmente una capa GraphQL genérica si el SDK generado resuelve la necesidad.
+
+---
+
+# 23. TYPESCRIPT
+
+Cuando se generen SDKs para clientes, mantener TypeScript como lenguaje principal.
+
+Evitar:
+
+any
+
+cuando exista un tipo generado disponible.
+
+No desactivar strict mode.
+
+Preparar:
+
+strict: true
+
+en las configuraciones TypeScript que correspondan.
+
+---
+
+# 24. ENVIRONMENT CONFIGURATION
+
+No almacenar secretos en el proyecto.
+
+Crear:
+
+.env.example
+
+con variables ficticias solamente cuando sean necesarias.
+
+NO crear ni modificar:
+
+.env
+
+con secretos reales.
+
+No incluir:
+
+* Firebase Admin private keys.
+* Service account JSON.
+* PostgreSQL passwords.
+* API secrets.
+
+---
+
+# 25. DOCUMENTATION
+
+Crear:
+
+docs/
+
+con:
+
+architecture.md
+firebase.md
+database.md
+security.md
+development.md
+deployment.md
+
+Documentar:
+
+* Arquitectura.
+* Firebase project.
+* SQL Connect.
+* Cloud SQL.
+* Authentication.
+* Authorization.
+* Local development.
+* Emulator.
+* SDK generation.
+* Deployment.
+
+---
+
+# 26. NO GIT
+
+Reiteración importante:
+
+NO realizar ninguna operación Git.
+
+Yo haré personalmente:
+
+* git init
+* git add
+* git commit
+* git branch
+* git merge
+* git push
+* git pull
+* tags
+* releases
+
+El agente solamente debe modificar los archivos del proyecto.
+
+---
+
+# 27. NO CREAR MOBILE TODAVÍA
+
+No crear:
+
+android/
+ios/
+
+No inicializar React Native.
+
+No instalar React Native.
+
+No instalar Android dependencies.
+
+No instalar Android Studio dependencies.
+
+Eso pertenece a una fase posterior.
+
+---
+
+# 28. NO CREAR DESKTOP TODAVÍA
+
+No crear aplicación Tauri.
+
+No instalar Rust/Tauri todavía.
+
+Eso pertenece a una fase posterior.
+
+---
+
+# 29. VALIDACIÓN DE LA FASE
+
+Antes de considerar la fase terminada, comprobar:
+
+1. Firebase CLI funciona.
+2. SQL Connect está correctamente configurado.
+3. Cloud SQL PostgreSQL está configurado.
+4. Schema válido.
+5. Query válida.
+6. Mutation válida.
+7. Authentication integrada.
+8. Authorization configurada.
+9. Emulator funciona.
+10. SDK puede generarse.
+11. Proyecto TypeScript compila si se crea algún código auxiliar.
+12. Documentación está completa.
+
+---
+
+# 30. DEPLOYMENT
+
+Preparar la configuración para deployment.
+
+El deployment de SQL Connect deberá realizarse mediante las herramientas oficiales de Firebase.
+
+No ejecutar deployment a producción sin mi autorización explícita.
+
+No realizar:
+
+firebase deploy
+
+automáticamente.
+
+Puedes preparar los archivos necesarios y decirme el comando exacto que debo ejecutar.
+
+Firebase documenta actualmente el deployment de SQL Connect mediante:
+
+firebase deploy --only dataconnect
+
+pero NO ejecutar ese comando automáticamente.
+
+---
+
+# 31. CAMBIOS EN FIREBASE
+
+No realizar modificaciones destructivas en Firebase.
+
+NO:
+
+* Eliminar bases de datos.
+* Eliminar servicios.
+* Eliminar usuarios.
+* Eliminar tablas.
+* Eliminar schemas.
+* Cambiar configuraciones críticas.
+* Hacer deploy de producción.
+
+sin mi autorización explícita.
+
+---
+
+# 32. DEPENDENCIAS
+
+No instalar paquetes innecesarios.
+
+Antes de agregar una dependencia:
+
+1. Explica para qué se necesita.
+2. Verifica compatibilidad.
+3. Utiliza la versión estable apropiada.
+4. Evita dependencias abandonadas.
+
+No introducir frameworks adicionales sin justificación.
+
+---
+
+# 33. DOCUMENTACIÓN OFICIAL
+
+Cuando exista duda sobre Firebase SQL Connect, Firebase Authentication o Cloud SQL, utilizar primero documentación oficial de Firebase/Google.
+
+No asumir que documentación antigua sigue siendo válida.
+
+Firebase SQL Connect evoluciona rápidamente y sus comandos/configuración pueden cambiar.
+
+---
+
+# 34. RESULTADO ESPERADO
+
+Al terminar esta fase quiero tener:
+
+LibreriaSystem/
+│
+├── dataconnect/
+│   ├── schema/
+│   ├── connector/
+│   └── ...
+│
+├── docs/
+│   ├── architecture.md
+│   ├── firebase.md
+│   ├── database.md
+│   ├── security.md
+│   ├── development.md
+│   └── deployment.md
+│
+├── .env.example
+├── .gitignore
+├── firebase.json
+├── dataconnect.yaml
+└── README.md
+
+La estructura exacta puede variar según la versión actual de Firebase CLI/SQL Connect.
+
+No fuerces nombres de archivos si Firebase requiere otra estructura.
+
+---
+
+# 35. PROCESO DE EJECUCIÓN
+
+Trabaja incrementalmente.
+
+Para cada cambio:
+
+1. Analiza.
+2. Implementa.
+3. Valida.
+4. Ejecuta las comprobaciones disponibles.
+5. Corrige errores.
+6. Documenta.
+
+NO realizar cambios masivos innecesarios.
+
+NO avanzar a la siguiente fase.
+
+---
+
+# 36. FINAL RESPONSE
+
+Al terminar, NO ejecutes ninguna operación Git.
+
+Devuélveme:
+
+1. Arquitectura creada.
+2. Estructura de archivos.
+3. Configuración Firebase.
+4. Configuración SQL Connect.
+5. Configuración PostgreSQL.
+6. Queries creadas.
+7. Mutations creadas.
+8. Configuración Authentication.
+9. Configuración Authorization.
+10. Emulator configurado.
+11. SDK generado, si corresponde.
+12. Comandos que yo debo ejecutar manualmente.
+13. Comandos de Git que yo debería considerar ejecutar manualmente.
+14. Problemas encontrados.
+15. Decisiones arquitectónicas pendientes.
+16. Qué debe hacerse en la Fase 2.
+
+IMPORTANTE:
+
+No ejecutar Git.
+No hacer deployment a producción.
+No crear Mobile.
+No crear Desktop.
+No implementar ventas.
+No implementar inventario.
+
+Detente al finalizar esta fase.

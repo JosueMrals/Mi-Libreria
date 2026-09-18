@@ -1,0 +1,8 @@
+# Modelo mínimo para validar infraestructura de Firebase SQL Connect.
+# No forma parte del dominio final; solo valida schema, auth, queries, mutations y SDK.
+
+type TestEntity @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(120)")
+  createdAt: Timestamp! @default(expr: "request.time")
+}

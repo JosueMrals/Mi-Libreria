@@ -1,0 +1,90 @@
+# Fase 2 — Identity, RBAC, Branches y Auditoria.
+#
+# Separacion de conceptos:
+#   Firebase Authentication -> identidad (uid, email, estado de sesion).
+#   UserProfile             -> perfil de aplicacion en PostgreSQL, enlazado por firebaseUid.
+# El firebaseUid de un UserProfile SIEMPRE debe resolverse desde "auth.uid" en las
+# mutations/queries (ver dataconnect/identity/). Nunca se acepta como valor libre del cliente.
+
+type UserProfile @table {
+  id: UUID! @default(expr: "uuidV4()")
+  firebaseUid: String! @unique @col(dataType: "varchar(128)")
+  email: String! @col(dataType: "varchar(255)")
+  firstName: String @col(dataType: "varchar(100)")
+  lastName: String @col(dataType: "varchar(100)")
+  displayName: String @col(dataType: "varchar(150)")
+  phone: String @col(dataType: "varchar(30)")
+  # Valores validos: ACTIVE | INACTIVE | SUSPENDED.
+  # Data Connect no soporta todavia enums/CHECK declarativos en el schema; el valor solo se
+  # escribe mediante mutations con literales fijos (ActivateUser/DeactivateUser/SuspendUser),
+  # nunca como string arbitrario recibido del cliente. Ver docs/security.md.
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+  lastLoginAt: Timestamp
+}
+
+type Role @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @unique @col(dataType: "varchar(50)")
+  description: String
+}
+
+type Permission @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @unique @col(dataType: "varchar(80)")
+  description: String
+}
+
+# Role <-> Permission (muchos a muchos). Unicidad del par garantizada por la clave compuesta.
+type RolePermission @table(key: ["role", "permission"]) {
+  role: Role!
+  permission: Permission!
+}
+
+# UserProfile <-> Role (muchos a muchos). Un usuario puede tener varios roles.
+type UserRole @table(key: ["userProfile", "role"]) {
+  userProfile: UserProfile!
+  role: Role!
+}
+
+type Branch @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(150)")
+  code: String! @unique @col(dataType: "varchar(20)")
+  address: String
+  phone: String @col(dataType: "varchar(30)")
+  # Valores validos: ACTIVE | INACTIVE.
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# UserProfile <-> Branch (muchos a muchos): scope real de sucursales por usuario.
+# La autorizacion de negocio debe validar esta relacion en servidor; jamas confiar en un
+# branchId enviado directamente por Mobile/Desktop (ver Fase 2, seccion 13).
+type UserBranch @table(key: ["userProfile", "branch"]) {
+  userProfile: UserProfile!
+  branch: Branch!
+}
+
+# Append-only: no existe (ni existira) ninguna mutation "_update"/"_delete" expuesta al
+# cliente para esta tabla. Sin operacion publicada, el SDK generado no puede modificarla ni
+# borrarla; esa es la garantia real de inmutabilidad en este modelo (ver docs/security.md).
+type AuditLog @table {
+  id: UUID! @default(expr: "uuidV4()")
+  # Identidad del actor resuelta por el servidor desde el token autenticado (auth.uid) en el
+  # momento del insert. Ninguna mutation declara una variable de cliente para este campo.
+  performedByUid: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+  branch: Branch
+  action: String! @col(dataType: "varchar(60)")
+  entityType: String @col(dataType: "varchar(60)")
+  # UUID en vez de String: todas las entidades de dominio referenciadas (UserProfile, Role,
+  # Permission, Branch, UserRole/UserBranch por su UserProfile) usan UUID como identificador.
+  entityId: UUID
+  timestamp: Timestamp! @default(expr: "request.time")
+  correlationId: String @col(dataType: "varchar(128)")
+  ipAddress: String @col(dataType: "varchar(64)")
+  userAgent: String
+  metadata: String
+}

@@ -1,0 +1,379 @@
+# FASE 2.1 — SECURITY HARDENING
+
+Estamos revisando la Fase 2 antes de crear la Fase 3.
+
+NO realizar ninguna operación Git.
+
+NO ejecutar git init.
+NO ejecutar git add.
+NO ejecutar git commit.
+NO ejecutar git push.
+NO ejecutar git pull.
+NO crear ramas.
+
+Yo gestionaré Git personalmente.
+
+NO comenzar la Fase 3.
+
+El objetivo de esta fase es solamente corregir y validar los problemas de seguridad pendientes de Fase 2.
+
+---
+
+# 1. SUSPENDED / INACTIVE USERS
+
+Corregir:
+
+GetMyProfile
+UpdateMyProfile
+
+Actualmente pueden ejecutarse aunque el usuario esté:
+
+SUSPENDED
+INACTIVE
+
+Modificar la autorización para que las operaciones de aplicación protegidas solamente estén disponibles para usuarios:
+
+status == ACTIVE
+
+La identidad Firebase puede seguir existiendo, pero un UserProfile:
+
+SUSPENDED
+o
+INACTIVE
+
+debe ser rechazado para operaciones protegidas de SQL Connect.
+
+No confiar en status enviado por el cliente.
+
+El status debe obtenerse del UserProfile asociado a auth.uid.
+
+Agregar pruebas para:
+
+ACTIVE → ALLOW
+
+SUSPENDED → DENY
+
+INACTIVE → DENY
+
+---
+
+# 2. PRIVILEGE ESCALATION TESTING
+
+Agregar pruebas E2E de seguridad para intentar:
+
+1. CASHIER intenta asignarse ADMIN.
+2. SELLER intenta asignarse ADMIN.
+3. USER intenta modificar Role.
+4. USER intenta modificar Permission.
+5. USER intenta modificar UserRole de otro usuario.
+6. USER intenta modificar UserBranch de otro usuario.
+7. USER intenta modificar su propio status.
+8. USER intenta modificar el status de otro usuario.
+9. Usuario A intenta modificar UserProfile de Usuario B.
+10. Usuario A intenta consultar datos de Usuario B que no debería poder consultar.
+
+Todas las operaciones no autorizadas deben devolver DENY.
+
+---
+
+# 3. BRANCH ESCALATION
+
+Agregar pruebas:
+
+Usuario asignado a Branch A:
+
+→ operación Branch A = ALLOW
+
+→ operación Branch B = DENY
+
+Intentar manipular:
+
+branchId
+userId
+entityId
+
+desde el cliente.
+
+La autorización debe comprobar las relaciones reales de PostgreSQL.
+
+No confiar en IDs enviados por el cliente.
+
+---
+
+# 4. ROLE ESCALATION
+
+Verificar que ningún usuario pueda modificar sus propios:
+
+role
+permissions
+
+simplemente modificando una mutation.
+
+Un usuario no debe poder convertir:
+
+CASHIER → ADMIN
+
+mediante manipulación del request.
+
+---
+
+# 5. SUPER_ADMIN
+
+Revisar cuidadosamente el comportamiento de SUPER_ADMIN.
+
+No introducir:
+
+if role == SUPER_ADMIN allow everything
+
+como bypass de autorización.
+
+Si SUPER_ADMIN posee todos los permisos, esto debe quedar representado por la matriz RolePermission o por una política explícita y documentada.
+
+Agregar pruebas.
+
+---
+
+# 6. AUDITLOG
+
+Verificar:
+
+AuditLog
+
+Debe ser append-only.
+
+No debe existir ninguna mutation pública para:
+
+update AuditLog
+delete AuditLog
+
+Los usuarios normales no deben poder insertar eventos arbitrarios fingiendo acciones.
+
+Por ejemplo, un cliente no debe poder decir:
+
+{
+"action": "USER_CREATED"
+}
+
+y crear un AuditLog falso.
+
+Los eventos deben generarse como consecuencia de operaciones autorizadas.
+
+---
+
+# 7. AUDIT METADATA
+
+Revisar:
+
+ipAddress
+userAgent
+correlationId
+
+Determinar cuáles pueden obtenerse realmente desde Firebase SQL Connect/CEL y cuáles no.
+
+NO inventar valores.
+
+NO permitir que el cliente pueda falsificar estos campos.
+
+Si una metadata no puede obtenerse de forma confiable en la arquitectura actual:
+
+* dejarla nullable;
+* documentar la limitación;
+* explicar cómo se podrá obtener posteriormente mediante infraestructura adecuada.
+
+Actualizar:
+
+docs/security.md
+
+y:
+
+docs/threat-model.md
+
+---
+
+# 8. FIREBASE USER ↔ POSTGRESQL USERPROFILE
+
+Revisar el problema de usuarios huérfanos.
+
+Documentar claramente el flujo:
+
+Firebase Auth User
+↓
+UserProfile
+
+Analizar los siguientes escenarios:
+
+A:
+Firebase creation = SUCCESS
+PostgreSQL creation = SUCCESS
+
+B:
+Firebase creation = SUCCESS
+PostgreSQL creation = FAILURE
+
+C:
+Firebase creation = FAILURE
+PostgreSQL creation = SUCCESS
+
+No simular una transacción distribuida si Firebase Auth y PostgreSQL no la soportan conjuntamente.
+
+Proponer una estrategia segura de:
+
+* retry
+* reconciliation
+* cleanup
+* idempotency
+
+La estrategia puede quedar documentada para implementación posterior si todavía no corresponde implementarla.
+
+---
+
+# 9. IDENTITY SPOOFING
+
+Crear pruebas para intentar utilizar:
+
+firebaseUid
+userId
+createdBy
+updatedBy
+
+de otro usuario.
+
+El sistema debe ignorar cualquier identidad proporcionada por el cliente cuando exista una identidad autenticada disponible.
+
+La identidad debe derivarse de:
+
+auth.uid
+
+---
+
+# 10. INPUT TAMPERING
+
+Probar manipulación de:
+
+* userId
+* roleId
+* permissionId
+* branchId
+* status
+* createdBy
+* updatedBy
+
+Verificar:
+
+* validation
+* authorization
+* database constraints
+
+No depender solamente de validación de frontend.
+
+---
+
+# 11. FAIL CLOSED
+
+Verificar que ante una condición desconocida o ausencia de autorización:
+
+DENY
+
+Nunca:
+
+ALLOW
+
+por defecto.
+
+---
+
+# 12. DATABASE CONSTRAINTS
+
+Revisar constraints:
+
+firebaseUid UNIQUE
+
+branch.code UNIQUE
+
+Role.name UNIQUE
+
+Permission.name UNIQUE
+
+UserRole(userId, roleId) UNIQUE
+
+RolePermission(roleId, permissionId) UNIQUE
+
+UserBranch(userId, branchId) UNIQUE
+
+Agregar las constraints que realmente sean necesarias.
+
+No agregar constraints arbitrarias.
+
+---
+
+# 13. TEST SUMMARY
+
+Al finalizar ejecutar todas las pruebas disponibles.
+
+Mostrar:
+
+Total tests
+Passed
+Failed
+
+Separar especialmente:
+
+Authentication
+Authorization
+Branch isolation
+Role escalation
+Permission escalation
+Audit security
+User status
+
+No considerar la fase terminada si existen fallos de seguridad.
+
+---
+
+# 14. DOCUMENTATION
+
+Actualizar:
+
+docs/security.md
+docs/threat-model.md
+docs/authorization-matrix.md
+
+Documentar cualquier limitación real.
+
+No ocultar problemas.
+
+---
+
+# 15. NO FASE 3
+
+NO implementar:
+
+Product
+Category
+Brand
+Supplier
+Customer
+Inventory
+Purchase
+Sale
+
+DETENERSE después del hardening.
+
+---
+
+# 16. FINAL RESPONSE
+
+Mostrar:
+
+1. Problemas corregidos.
+2. Archivos modificados.
+3. Tests agregados.
+4. Tests ejecutados.
+5. Resultado.
+6. Riesgos que siguen pendientes.
+7. Decisiones de seguridad.
+8. Suggested Git checkpoint.
+
+NO ejecutar Git.
+NO hacer deployment.
+NO comenzar Fase 3.

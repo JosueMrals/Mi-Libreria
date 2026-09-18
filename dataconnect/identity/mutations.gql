@@ -1,0 +1,373 @@
+# Identity / RBAC / Branches / Audit — mutations.
+#
+# Notas de plataforma confirmadas contra el emulador (Firebase CLI 15.30.1): ver el
+# encabezado de queries.gql (mismo connector) para el detalle de "where + eq_expr" en vez de
+# "key: { firebaseUid_expr }" y de los nombres reales de relacion inversa
+# ("userRoles_on_userProfile", "rolePermissions_on_role").
+#
+# Reglas aplicadas de forma consistente en todo este archivo:
+# 1. Ninguna mutation declara una variable de cliente para firebaseUid/performedByUid/status
+#    "libre": la identidad del actor sale siempre de auth.uid (ver schema/identity.gql).
+# 2. Las mutations administrativas exigen el permiso concreto mediante un bloque
+#    "query @redact { ... @check(...) }" (mecanismo oficial de SQL Connect) antes de tocar
+#    datos. Si el check falla, toda la mutation aborta (fail closed).
+# 3. Cada mutation que cambia estado de negocio inserta su propio AuditLog en la misma
+#    transaccion (@transaction): el evento de auditoria no es un endpoint generico aparte,
+#    para que el cliente no pueda forjar entradas de auditoria con contenido arbitrario.
+# 4. Los identificadores de fila nueva (Branch, Role, Permission, UserProfile por alta
+#    administrativa) se generan en el cliente como UUID explicito cuando el AuditLog de la
+#    misma operacion necesita referenciarlos (patron habitual y seguro en Data Connect: un
+#    UUID no es una decision de autorizacion).
+
+# ---------- Self-service ----------
+
+mutation CreateMyProfile($firstName: String, $lastName: String, $displayName: String) @auth(level: USER_EMAIL_VERIFIED) {
+  # Insert (no upsert): si ya existe un UserProfile para este firebaseUid, la restriccion
+  # UNIQUE rechaza el duplicado. Se evita a proposito un upsert aqui: permitiria que un
+  # usuario SUSPENDED/INACTIVE se "reactivara" a si mismo simplemente repitiendo el alta.
+  userProfile_insert(
+    data: {
+      firebaseUid_expr: "auth.uid"
+      email_expr: "auth.token.email"
+      firstName: $firstName
+      lastName: $lastName
+      displayName: $displayName
+      status: "ACTIVE"
+    }
+  )
+}
+
+# Fase 2.1 (hardening): UpdateMyProfile y RecordLogin ahora exigen status == 'ACTIVE' del
+# UserProfile propio antes de escribir nada. Antes de este fix, un usuario SUSPENDED/INACTIVE
+# podia seguir actualizando su perfil o "iniciando sesion" (lastLoginAt + AuditLog) usando
+# solo un token valido de Firebase, sin que PostgreSQL lo bloqueara. Ver docs/threat-model.md.
+
+mutation UpdateMyProfile($firstName: String, $lastName: String, $displayName: String, $phone: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.exists(u, u.status == 'ACTIVE')"
+      message: "El perfil no esta activo"
+    ) {
+      status
+    }
+  }
+  userProfile_update(
+    first: { where: { firebaseUid: { eq_expr: "auth.uid" } } }
+    data: {
+      firstName: $firstName
+      lastName: $lastName
+      displayName: $displayName
+      phone: $phone
+      updatedAt_expr: "request.time"
+    }
+  )
+}
+
+mutation RecordLogin @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.exists(u, u.status == 'ACTIVE')"
+      message: "El perfil no esta activo"
+    ) {
+      status
+    }
+  }
+  userProfile_update(
+    first: { where: { firebaseUid: { eq_expr: "auth.uid" } } }
+    data: { lastLoginAt_expr: "request.time" }
+  )
+  auditLog_insert(data: { action: "AUTH_LOGIN" })
+}
+
+# ---------- Usuarios (requiere users.create / users.update / users.disable) ----------
+
+mutation CreateUserProfileForUser(
+  $newUserProfileId: UUID!
+  $firebaseUid: String!
+  $email: String!
+  $firstName: String
+  $lastName: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.create'))"
+      message: "Requiere permiso users.create"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  # Requiere que la identidad Firebase ($firebaseUid) ya exista (creada por separado via
+  # Admin SDK/panel administrativo, fuera de Data Connect). Este paso solo crea el perfil de
+  # aplicacion; ver docs/security.md "Consistencia Firebase Auth / PostgreSQL".
+  userProfile_insert(
+    data: {
+      id: $newUserProfileId
+      firebaseUid: $firebaseUid
+      email: $email
+      firstName: $firstName
+      lastName: $lastName
+      status: "ACTIVE"
+    }
+  )
+  auditLog_insert(data: { action: "USER_CREATED", entityType: "UserProfile", entityId: $newUserProfileId })
+}
+
+mutation UpdateUserProfileByAdmin(
+  $targetUserProfileId: UUID!
+  $firstName: String
+  $lastName: String
+  $displayName: String
+  $phone: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.update'))"
+      message: "Requiere permiso users.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userProfile_update(
+    id: $targetUserProfileId
+    data: {
+      firstName: $firstName
+      lastName: $lastName
+      displayName: $displayName
+      phone: $phone
+      updatedAt_expr: "request.time"
+    }
+  )
+  auditLog_insert(data: { action: "USER_UPDATED", entityType: "UserProfile", entityId: $targetUserProfileId })
+}
+
+mutation DeactivateUser($targetUserProfileId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.disable'))"
+      message: "Requiere permiso users.disable"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userProfile_update(id: $targetUserProfileId, data: { status: "INACTIVE", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "USER_DISABLED", entityType: "UserProfile", entityId: $targetUserProfileId })
+}
+
+mutation SuspendUser($targetUserProfileId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.disable'))"
+      message: "Requiere permiso users.disable"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userProfile_update(id: $targetUserProfileId, data: { status: "SUSPENDED", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "USER_SUSPENDED", entityType: "UserProfile", entityId: $targetUserProfileId })
+}
+
+mutation ReactivateUser($targetUserProfileId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.update'))"
+      message: "Requiere permiso users.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userProfile_update(id: $targetUserProfileId, data: { status: "ACTIVE", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "USER_UPDATED", entityType: "UserProfile", entityId: $targetUserProfileId })
+}
+
+# ---------- Roles y permisos (requiere roles.manage / permissions.manage) ----------
+
+mutation CreateRole($newRoleId: UUID!, $name: String!, $description: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'roles.manage'))"
+      message: "Requiere permiso roles.manage"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  role_insert(data: { id: $newRoleId, name: $name, description: $description })
+  auditLog_insert(data: { action: "ROLE_CREATED", entityType: "Role", entityId: $newRoleId })
+}
+
+mutation UpdateRoleDescription($roleId: UUID!, $description: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'roles.manage'))"
+      message: "Requiere permiso roles.manage"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  # El nombre del rol no es editable aqui a proposito: es la clave logica referenciada por
+  # los checks de autorizacion y por el seed de datos; renombrarlo en caliente es una
+  # operacion administrativa distinta y mas delicada, fuera del alcance de esta fase.
+  role_update(id: $roleId, data: { description: $description })
+  auditLog_insert(data: { action: "ROLE_UPDATED", entityType: "Role", entityId: $roleId })
+}
+
+mutation CreatePermission($newPermissionId: UUID!, $name: String!, $description: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'permissions.manage'))"
+      message: "Requiere permiso permissions.manage"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  permission_insert(data: { id: $newPermissionId, name: $name, description: $description })
+}
+
+mutation AssignRole($targetUserProfileId: UUID!, $roleId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'roles.manage'))"
+      message: "Requiere permiso roles.manage"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userRole_insert(data: { userProfileId: $targetUserProfileId, roleId: $roleId })
+  auditLog_insert(data: { action: "ROLE_ASSIGNED", entityType: "UserProfile", entityId: $targetUserProfileId })
+}
+
+mutation RemoveRole($targetUserProfileId: UUID!, $roleId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'roles.manage'))"
+      message: "Requiere permiso roles.manage"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userRole_delete(key: { userProfileId: $targetUserProfileId, roleId: $roleId })
+  auditLog_insert(data: { action: "ROLE_REMOVED", entityType: "UserProfile", entityId: $targetUserProfileId })
+}
+
+mutation AssignPermissionToRole($roleId: UUID!, $permissionId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'permissions.manage'))"
+      message: "Requiere permiso permissions.manage"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  rolePermission_insert(data: { roleId: $roleId, permissionId: $permissionId })
+  auditLog_insert(data: { action: "PERMISSION_ASSIGNED", entityType: "Role", entityId: $roleId })
+}
+
+mutation RemovePermissionFromRole($roleId: UUID!, $permissionId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'permissions.manage'))"
+      message: "Requiere permiso permissions.manage"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  rolePermission_delete(key: { roleId: $roleId, permissionId: $permissionId })
+  auditLog_insert(data: { action: "PERMISSION_REMOVED", entityType: "Role", entityId: $roleId })
+}
+
+# ---------- Sucursales (requiere branches.create / branches.update / users.update) ----------
+
+mutation CreateBranch($newBranchId: UUID!, $name: String!, $code: String!, $address: String, $phone: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'branches.create'))"
+      message: "Requiere permiso branches.create"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  branch_insert(data: { id: $newBranchId, name: $name, code: $code, address: $address, phone: $phone, status: "ACTIVE" })
+  auditLog_insert(data: { action: "BRANCH_CREATED", entityType: "Branch", entityId: $newBranchId, branchId: $newBranchId })
+}
+
+mutation UpdateBranch($branchId: UUID!, $name: String, $address: String, $phone: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'branches.update'))"
+      message: "Requiere permiso branches.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  branch_update(id: $branchId, data: { name: $name, address: $address, phone: $phone, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "BRANCH_UPDATED", entityType: "Branch", entityId: $branchId, branchId: $branchId })
+}
+
+mutation ActivateBranch($branchId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'branches.update'))"
+      message: "Requiere permiso branches.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  branch_update(id: $branchId, data: { status: "ACTIVE", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "BRANCH_UPDATED", entityType: "Branch", entityId: $branchId, branchId: $branchId })
+}
+
+mutation DeactivateBranch($branchId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'branches.update'))"
+      message: "Requiere permiso branches.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  branch_update(id: $branchId, data: { status: "INACTIVE", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "BRANCH_UPDATED", entityType: "Branch", entityId: $branchId, branchId: $branchId })
+}
+
+mutation AssignUserToBranch($targetUserProfileId: UUID!, $branchId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.update'))"
+      message: "Requiere permiso users.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userBranch_insert(data: { userProfileId: $targetUserProfileId, branchId: $branchId })
+  auditLog_insert(data: { action: "USER_UPDATED", entityType: "UserBranch", entityId: $targetUserProfileId, branchId: $branchId })
+}
+
+mutation RemoveUserFromBranch($targetUserProfileId: UUID!, $branchId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'users.update'))"
+      message: "Requiere permiso users.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  userBranch_delete(key: { userProfileId: $targetUserProfileId, branchId: $branchId })
+  auditLog_insert(data: { action: "USER_UPDATED", entityType: "UserBranch", entityId: $targetUserProfileId, branchId: $branchId })
+}
