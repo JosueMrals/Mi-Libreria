@@ -1,0 +1,681 @@
+# Catalog (Fase 3) — mutations.
+#
+# Reglas heredadas de Fase 2 (identity/mutations.gql), aplicadas igual aqui:
+# 1. Ninguna mutation expone createdBy/updatedBy/performedByUid como variable de cliente — se
+#    resuelven por auth.uid en servidor (schema/catalog.gql).
+# 2. Cada mutation administrativa exige el permiso concreto via un bloque
+#    "query @redact { ... @check(...) }" antes de escribir nada (fail closed, @transaction).
+# 3. Cada mutation que cambia estado inserta su propio AuditLog en la misma transaccion.
+# 4. Los UUID de filas nuevas se generan en el cliente cuando el AuditLog de la misma
+#    operacion necesita referenciarlos.
+#
+# Separacion de permisos por diseno (seccion 31): products.update NO permite tocar precios.
+# ProductPrice tiene sus propias mutations detras de prices.update.
+#
+# No se crean mutations para Author/Publisher fuera de Create/Update (seccion 44 no las pide);
+# no hay "DeactivateAuthor"/"DeactivatePublisher" en esta fase — limitacion documentada en
+# docs/catalog.md, no un descuido.
+
+# ---------- Product ----------
+
+mutation CreateProduct(
+  $newProductId: UUID!
+  $sku: String!
+  $name: String!
+  $shortName: String
+  $description: String
+  $productTypeId: UUID!
+  $categoryId: UUID
+  $brandId: UUID
+  $unitOfMeasureId: UUID!
+  $taxCategoryId: UUID
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.create'))"
+      message: "Requiere permiso products.create"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  product_insert(
+    data: {
+      id: $newProductId
+      sku: $sku
+      name: $name
+      shortName: $shortName
+      description: $description
+      productTypeId: $productTypeId
+      categoryId: $categoryId
+      brandId: $brandId
+      unitOfMeasureId: $unitOfMeasureId
+      taxCategoryId: $taxCategoryId
+      status: "ACTIVE"
+      isSellable: true
+      isPurchasable: true
+      isInventoried: true
+    }
+  )
+  auditLog_insert(data: { action: "PRODUCT_CREATED", entityType: "Product", entityId: $newProductId })
+}
+
+mutation UpdateProduct(
+  $productId: UUID!
+  $name: String
+  $shortName: String
+  $description: String
+  $categoryId: UUID
+  $brandId: UUID
+  $taxCategoryId: UUID
+  $isSellable: Boolean
+  $isPurchasable: Boolean
+  $isInventoried: Boolean
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  product_update(
+    id: $productId
+    data: {
+      name: $name
+      shortName: $shortName
+      description: $description
+      categoryId: $categoryId
+      brandId: $brandId
+      taxCategoryId: $taxCategoryId
+      isSellable: $isSellable
+      isPurchasable: $isPurchasable
+      isInventoried: $isInventoried
+      updatedBy_expr: "auth.uid"
+      updatedAt_expr: "request.time"
+    }
+  )
+  auditLog_insert(data: { action: "PRODUCT_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+# "Delete" = baja logica (seccion 45): products.delete gatea sacar el producto de circulacion,
+# nunca DELETE fisico (no existe ninguna mutation que borre una fila Product).
+mutation DeactivateProduct($productId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.delete'))"
+      message: "Requiere permiso products.delete"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  product_update(id: $productId, data: { status: "INACTIVE", updatedBy_expr: "auth.uid", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "PRODUCT_DEACTIVATED", entityType: "Product", entityId: $productId })
+}
+
+mutation DiscontinueProduct($productId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.delete'))"
+      message: "Requiere permiso products.delete"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  product_update(id: $productId, data: { status: "DISCONTINUED", updatedBy_expr: "auth.uid", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "PRODUCT_DEACTIVATED", entityType: "Product", entityId: $productId })
+}
+
+mutation ReactivateProduct($productId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  product_update(id: $productId, data: { status: "ACTIVE", updatedBy_expr: "auth.uid", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "PRODUCT_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+# ---------- ProductIdentifier ----------
+
+mutation CreateProductIdentifier($newIdentifierId: UUID!, $productId: UUID!, $type: String!, $value: String!, $isPrimary: Boolean!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  productIdentifier_insert(data: { id: $newIdentifierId, productId: $productId, type: $type, value: $value, isPrimary: $isPrimary })
+  auditLog_insert(data: { action: "PRODUCT_IDENTIFIER_ADDED", entityType: "Product", entityId: $productId })
+}
+
+mutation RemoveProductIdentifier($type: String!, $value: String!, $productId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  # La key de la tabla es (type, value) — ver schema/catalog.gql. "id" existe como columna
+  # pero no forma parte de la key declarada, asi que no es un argumento valido para _delete.
+  productIdentifier_delete(key: { type: $type, value: $value })
+  auditLog_insert(data: { action: "PRODUCT_IDENTIFIER_REMOVED", entityType: "Product", entityId: $productId })
+}
+
+# ---------- ProductVariant ----------
+
+mutation CreateProductVariant($newVariantId: UUID!, $productId: UUID!, $sku: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  # productId con FOREIGN KEY real: una variante sin Product valido es rechazada por
+  # PostgreSQL (seccion 55, "no permitir variantes huerfanas").
+  productVariant_insert(data: { id: $newVariantId, productId: $productId, sku: $sku, status: "ACTIVE" })
+  auditLog_insert(data: { action: "PRODUCT_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+mutation UpdateProductVariant($variantId: UUID!, $productId: UUID!, $sku: String, $status: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  productVariant_update(id: $variantId, data: { sku: $sku, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "PRODUCT_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+# ---------- ProductPrice (prices.update — separado de products.*, seccion 31) ----------
+
+# Fase 3.1, seccion 8/9: no permitir precios invalidos. NaN/Infinity no son literales JSON
+# validos, asi que un cliente estandar ya no puede enviarlos como variable GraphQL Float; el
+# @check agrega ademas: no negativos, tope de negocio de 999,999.99 (ampliamente suficiente
+# para cualquier articulo de libreria), y priceType restringido a los 4 valores del dominio
+# (seccion 30) en vez de aceptar cualquier string.
+#
+# HALLAZGO DE PLATAFORMA (Fase 3.1): el tope de negocio se fijo deliberadamente MUY por debajo
+# del limite real de la columna (numeric(12,2), hasta 9999999999.99): un valor que excede la
+# capacidad real de la columna hace que Postgres lo rechace por overflow numerico al intentar
+# bindear el parametro del INSERT, ANTES de que el resultado de este @check pueda evitar el
+# intento — y ese error de overflow, en este emulador local, deja la conexion compartida en un
+# estado invalido para requests posteriores (mismo tipo de fragilidad ya documentado en
+# CreateBookDetails, ver docs/catalog.md). Fijar el tope de negocio muy por debajo del limite
+# de la columna evita que un valor "solo un poco invalido" dispare ese problema.
+mutation CreateProductPrice($newPriceId: UUID!, $productId: UUID!, $priceType: String!, $amount: Float!, $currencyId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'prices.update')) && vars.amount >= 0.0 && vars.amount <= 999999.99 && vars.priceType in ['COST', 'RETAIL', 'WHOLESALE', 'PROMOTIONAL']"
+      message: "Requiere permiso prices.update, o monto/priceType invalido (0 <= monto <= 999999.99; priceType en COST/RETAIL/WHOLESALE/PROMOTIONAL)"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  productPrice_insert(data: { id: $newPriceId, productId: $productId, priceType: $priceType, amount: $amount, currencyId: $currencyId, status: "ACTIVE" })
+  auditLog_insert(data: { action: "PRICE_CREATED", entityType: "Product", entityId: $productId })
+}
+
+# Fase 3.1: $status ahora se aplica de verdad (antes se declaraba pero nunca se usaba en
+# productPrice_update — un precio no podia desactivarse). Restringido a ACTIVE/INACTIVE, igual
+# que el resto de estados del catalogo (seccion 12).
+mutation UpdateProductPrice($priceId: UUID!, $productId: UUID!, $amount: Float, $status: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'prices.update')) && (!has(vars.amount) || vars.amount == null || (vars.amount >= 0.0 && vars.amount <= 999999.99)) && (!has(vars.status) || vars.status == null || vars.status in ['ACTIVE', 'INACTIVE'])"
+      message: "Requiere permiso prices.update, monto invalido, o status fuera de ACTIVE/INACTIVE"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  productPrice_update(id: $priceId, data: { amount: $amount, status: $status })
+  auditLog_insert(data: { action: "PRICE_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+# ---------- Category (categories.*) ----------
+#
+# Prevencion de ciclos (seccion 8): se comprueba que la nueva categoria padre no sea la misma
+# categoria (auto-referencia, via variables — sin consulta) y que no este entre sus 3 primeros
+# ancestros (via "has()" para navegar relaciones nullable de forma segura).
+# ponytail: deteccion de ciclo acotada a 3 niveles de ancestros, no un grafo arbitrario — CEL
+# no soporta recursion; una jerarquia mas profunda que intente un ciclo mas alla de ese rango
+# no seria detectada aqui. Si se necesita una jerarquia mas profunda con esta garantia,
+# resolverlo con un CTE recursivo en una capa de validacion adicional (Cloud Function) o
+# ampliar manualmente los niveles siguiendo el mismo patron.
+
+mutation CreateCategory($newCategoryId: UUID!, $name: String!, $code: String!, $description: String, $parentId: UUID) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'categories.create')) && ((!has(vars.parentId) || vars.parentId == null) || vars.parentId != vars.newCategoryId)"
+      message: "Requiere permiso categories.create, o parentId invalido (auto-referencia)"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  category_insert(data: { id: $newCategoryId, name: $name, code: $code, description: $description, parentId: $parentId, status: "ACTIVE" })
+  auditLog_insert(data: { action: "CATEGORY_CREATED", entityType: "Category", entityId: $newCategoryId })
+}
+
+mutation UpdateCategory($categoryId: UUID!, $name: String, $description: String, $parentId: UUID) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'categories.update')) && ((!has(vars.parentId) || vars.parentId == null) || vars.parentId != vars.categoryId)"
+      message: "Requiere permiso categories.update, o parentId invalido (auto-referencia)"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+    newParent: categories(where: { id: { eq: $parentId } }) @check(
+      expr: "(!has(vars.parentId) || vars.parentId == null) || this.exists(c, (!has(c.parent) || c.parent.id != vars.categoryId) && (!has(c.parent) || !has(c.parent.parent) || c.parent.parent.id != vars.categoryId) && (!has(c.parent) || !has(c.parent.parent) || !has(c.parent.parent.parent) || c.parent.parent.parent.id != vars.categoryId))"
+      message: "Ciclo detectado: la nueva categoria padre desciende de la categoria que se esta moviendo"
+    ) {
+      id
+      parent {
+        id
+        parent {
+          id
+          parent {
+            id
+          }
+        }
+      }
+    }
+  }
+  category_update(id: $categoryId, data: { name: $name, description: $description, parentId: $parentId, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "CATEGORY_UPDATED", entityType: "Category", entityId: $categoryId })
+}
+
+mutation DeactivateCategory($categoryId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'categories.delete'))"
+      message: "Requiere permiso categories.delete"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  category_update(id: $categoryId, data: { status: "INACTIVE", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "CATEGORY_UPDATED", entityType: "Category", entityId: $categoryId })
+}
+
+# ---------- Brand (brands.*) ----------
+
+mutation CreateBrand($newBrandId: UUID!, $name: String!, $code: String, $description: String, $website: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'brands.create'))"
+      message: "Requiere permiso brands.create"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  brand_insert(data: { id: $newBrandId, name: $name, code: $code, description: $description, website: $website, status: "ACTIVE" })
+  auditLog_insert(data: { action: "BRAND_CREATED", entityType: "Brand", entityId: $newBrandId })
+}
+
+mutation UpdateBrand($brandId: UUID!, $name: String, $description: String, $website: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'brands.update'))"
+      message: "Requiere permiso brands.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  brand_update(id: $brandId, data: { name: $name, description: $description, website: $website, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "BRAND_UPDATED", entityType: "Brand", entityId: $brandId })
+}
+
+mutation DeactivateBrand($brandId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'brands.delete'))"
+      message: "Requiere permiso brands.delete"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  brand_update(id: $brandId, data: { status: "INACTIVE", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "BRAND_UPDATED", entityType: "Brand", entityId: $brandId })
+}
+
+# ---------- Author (authors.*, solo Create/Update — seccion 44 no pide baja) ----------
+
+mutation CreateAuthor($newAuthorId: UUID!, $firstName: String, $lastName: String, $displayName: String!, $bio: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'authors.create'))"
+      message: "Requiere permiso authors.create"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  author_insert(data: { id: $newAuthorId, firstName: $firstName, lastName: $lastName, displayName: $displayName, bio: $bio, status: "ACTIVE" })
+  auditLog_insert(data: { action: "AUTHOR_CREATED", entityType: "Author", entityId: $newAuthorId })
+}
+
+mutation UpdateAuthor($authorId: UUID!, $firstName: String, $lastName: String, $displayName: String, $bio: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'authors.update'))"
+      message: "Requiere permiso authors.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  author_update(id: $authorId, data: { firstName: $firstName, lastName: $lastName, displayName: $displayName, bio: $bio, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "AUTHOR_UPDATED", entityType: "Author", entityId: $authorId })
+}
+
+# ---------- Publisher (publishers.*, solo Create/Update) ----------
+
+mutation CreatePublisher($newPublisherId: UUID!, $name: String!, $code: String!, $description: String, $country: String, $website: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'publishers.create'))"
+      message: "Requiere permiso publishers.create"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  publisher_insert(data: { id: $newPublisherId, name: $name, code: $code, description: $description, country: $country, website: $website, status: "ACTIVE" })
+  auditLog_insert(data: { action: "PUBLISHER_CREATED", entityType: "Publisher", entityId: $newPublisherId })
+}
+
+mutation UpdatePublisher($publisherId: UUID!, $name: String, $description: String, $country: String, $website: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'publishers.update'))"
+      message: "Requiere permiso publishers.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  publisher_update(id: $publisherId, data: { name: $name, description: $description, country: $country, website: $website, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "PUBLISHER_UPDATED", entityType: "Publisher", entityId: $publisherId })
+}
+
+# ---------- Supplier (suppliers.* — permisos ya existentes desde Fase 2) ----------
+
+mutation CreateSupplier($newSupplierId: UUID!, $name: String!, $legalName: String, $taxId: String, $email: String, $phone: String, $address: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'suppliers.create'))"
+      message: "Requiere permiso suppliers.create"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  supplier_insert(data: { id: $newSupplierId, name: $name, legalName: $legalName, taxId: $taxId, email: $email, phone: $phone, address: $address, status: "ACTIVE" })
+  auditLog_insert(data: { action: "SUPPLIER_CREATED", entityType: "Supplier", entityId: $newSupplierId })
+}
+
+mutation UpdateSupplier($supplierId: UUID!, $name: String, $legalName: String, $email: String, $phone: String, $address: String) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'suppliers.update'))"
+      message: "Requiere permiso suppliers.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  supplier_update(id: $supplierId, data: { name: $name, legalName: $legalName, email: $email, phone: $phone, address: $address, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "SUPPLIER_UPDATED", entityType: "Supplier", entityId: $supplierId })
+}
+
+# ---------- SupplierProduct (suppliers.update — prepara Compras, Fase 6) ----------
+# Fase 3.1, seccion 25: Supplier y Product deben existir (FK reales); (supplier, product) es
+# la key compuesta de la tabla, asi que un duplicado es rechazado por PostgreSQL, no por logica
+# de aplicacion.
+
+mutation CreateSupplierProduct($supplierId: UUID!, $productId: UUID!, $supplierSku: String, $purchasePrice: Float, $isPreferred: Boolean!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'suppliers.update'))"
+      message: "Requiere permiso suppliers.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  supplierProduct_insert(data: { supplierId: $supplierId, productId: $productId, supplierSku: $supplierSku, purchasePrice: $purchasePrice, isPreferred: $isPreferred })
+  auditLog_insert(data: { action: "SUPPLIER_UPDATED", entityType: "Supplier", entityId: $supplierId })
+}
+
+# ---------- BookDetails (book_metadata.*) ----------
+#
+# Validacion de ISBN (seccion 16/41, endurecida en Fase 3.1 secciones 3/4/5): formato
+# normalizado (solo digitos, sin guiones/espacios) via regex CEL en el @check de abajo, MAS
+# checksum matematico real (mod-11 para ISBN-10 con soporte de X, mod-10 para ISBN-13) via
+# Native SQL en CreateBookDetails — ver el comentario junto a "bookDetails: _executeReturningFirst"
+# y docs/catalog.md para el detalle completo, incluyendo los hallazgos de plataforma
+# encontrados al implementarlo. La normalizacion (quitar guiones) es responsabilidad del
+# cliente/SDK: el servidor rechaza cualquier formato que no sea ya normalizado.
+
+mutation CreateBookDetails(
+  $productId: UUID!
+  $title: String!
+  $subtitle: String
+  $isbn10: String
+  $isbn13: String
+  $language: String
+  $format: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'book_metadata.create')) && (!has(vars.isbn10) || vars.isbn10 == null || vars.isbn10.matches('^[0-9]{9}[0-9X]$')) && (!has(vars.isbn13) || vars.isbn13 == null || vars.isbn13.matches('^[0-9]{13}$'))"
+      message: "Requiere permiso book_metadata.create, o ISBN10/ISBN13 con formato invalido (solo digitos normalizados)"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+    # Fase 3.1, seccion 18: BookDetails solo tiene sentido sobre un Product de tipo BOOK (un
+    # mouse no tiene ISBN). Sin este check, cualquier Product podia recibir BookDetails.
+    targetProduct: products(where: { id: { eq: $productId } }) @check(
+      expr: "this.size() > 0 && this[0].productType.code == 'BOOK'"
+      message: "BookDetails solo puede asociarse a un Product de productType BOOK"
+    ) {
+      productType { code }
+    }
+  }
+  # Fase 3.1, seccion 3/4: checksum matematico real (no solo formato). CEL no tiene forma de
+  # extraer caracteres individuales de un string (sin substring/index para strings), asi que
+  # el checksum se calcula en Native SQL (soportado oficialmente, ver docs/catalog.md#isbn).
+  # El formato ya fue validado arriba por @check; aqui solo se verifica el digito de control.
+  #
+  # DISENO (tras varias iteraciones, ver docs/catalog.md#hallazgos-de-plataforma): el checksum
+  # se evalua como condicion booleana en el WHERE del INSERT (nunca en un CASE que devuelva
+  # valores de tipos distintos por rama, ni en un WITH anidado dentro de otro WITH: ambos
+  # patrones rompen el protocolo de este emulador local — ver el hallazgo de plataforma
+  # completo en docs/catalog.md). Si el checksum es invalido, el INSERT no produce ninguna
+  # fila (0 rows) y el mutation devuelve "bookDetails: null", sin excepcion — el cliente debe
+  # tratar un resultado null como "ISBN rechazado por checksum".
+  #
+  # LIMITE ACEPTADO Y DOCUMENTADO: a diferencia del resto de mutations de este archivo, aqui
+  # "auditLog_insert" se ejecuta como campo separado (patron estandar), no encadenado al
+  # resultado del INSERT nativo — no hay forma de condicionarlo a "solo si se inserto la fila"
+  # sin volver a un WITH anidado (que rompe el emulador). Consecuencia real: si el checksum es
+  # invalido, igual se registra un AuditLog "BOOK_METADATA_UPDATED" aunque no se haya creado
+  # ningun BookDetails. No es un hueco de seguridad (el actor sigue siendo auth.uid, la accion
+  # describe la intencion real de la llamada), pero es una imprecision de auditoria conocida.
+  bookDetails: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."book_details"
+        ("product_id", "title", "subtitle", "isbn10", "isbn13", "language", "format", "created_at", "updated_at")
+      SELECT $1, $2, $3, $4, $5, $6, $7, now(), now()
+      WHERE
+        ($8::text IS NULL OR (
+          SELECT SUM(
+            (CASE WHEN i = 10 AND upper(substring($9 from 10 for 1)) = 'X'
+                  THEN 10
+                  ELSE substring($10 from i for 1)::int
+             END) * (11 - i)
+          ) FROM generate_series(1, 10) AS i
+        ) % 11 = 0)
+        AND
+        ($11::text IS NULL OR (
+          SELECT SUM(
+            substring($12 from i for 1)::int * (CASE WHEN i % 2 = 1 THEN 1 ELSE 3 END)
+          ) FROM generate_series(1, 13) AS i
+        ) % 10 = 0)
+      RETURNING "product_id", "title", "isbn10", "isbn13"
+    """
+    params: [
+      $productId, $title, $subtitle, $isbn10, $isbn13, $language, $format
+      $isbn10, $isbn10, $isbn10
+      $isbn13, $isbn13
+    ]
+  )
+  auditLog_insert(data: { action: "BOOK_METADATA_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+# Fase 3.1, seccion 22: volumeNumber/pageCount no deben aceptar valores imposibles (negativos).
+mutation UpdateBookDetails(
+  $productId: UUID!
+  $title: String
+  $subtitle: String
+  $synopsis: String
+  $pageCount: Int
+  $format: String
+  $seriesId: UUID
+  $volumeNumber: Int
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'book_metadata.update')) && (!has(vars.pageCount) || vars.pageCount == null || vars.pageCount >= 0) && (!has(vars.volumeNumber) || vars.volumeNumber == null || vars.volumeNumber >= 1)"
+      message: "Requiere permiso book_metadata.update, o pageCount/volumeNumber invalido (deben ser >= 0 y >= 1 respectivamente)"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  bookDetails_update(key: { productId: $productId }, data: { title: $title, subtitle: $subtitle, synopsis: $synopsis, pageCount: $pageCount, format: $format, seriesId: $seriesId, volumeNumber: $volumeNumber, updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "BOOK_METADATA_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+mutation AddBookAuthor($productId: UUID!, $authorId: UUID!, $authorRole: String!, $displayOrder: Int!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'book_metadata.update'))"
+      message: "Requiere permiso book_metadata.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  bookAuthor_insert(data: { bookDetails: { productId: $productId }, authorId: $authorId, authorRole: $authorRole, displayOrder: $displayOrder })
+  auditLog_insert(data: { action: "BOOK_METADATA_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+mutation AddBookPublisher($productId: UUID!, $publisherId: UUID!, $isPrimary: Boolean!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'book_metadata.update'))"
+      message: "Requiere permiso book_metadata.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  bookPublisher_insert(data: { bookDetails: { productId: $productId }, publisherId: $publisherId, isPrimary: $isPrimary })
+  auditLog_insert(data: { action: "BOOK_METADATA_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+mutation AddBookGenre($productId: UUID!, $genreId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'book_metadata.update'))"
+      message: "Requiere permiso book_metadata.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  bookGenre_insert(data: { bookDetails: { productId: $productId }, genreId: $genreId })
+  auditLog_insert(data: { action: "BOOK_METADATA_UPDATED", entityType: "Product", entityId: $productId })
+}
+
+# ---------- ProductOption / ProductOptionValue (products.update — seccion 24) ----------
+# Sin duplicados dentro de una Option: la key compuesta ["productOption", "value"] en el
+# schema rechaza (option, value) repetidos a nivel de PostgreSQL, no de aplicacion.
+
+mutation CreateProductOption($newOptionId: UUID!, $name: String!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  productOption_insert(data: { id: $newOptionId, name: $name, status: "ACTIVE" })
+}
+
+mutation CreateProductOptionValue($productOptionId: UUID!, $value: String!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  productOptionValue_insert(data: { productOptionId: $productOptionId, value: $value })
+}
+
+# ---------- ProductImage (products.update — seccion 26) ----------
+# isPrimary NO es mutuamente excluyente hoy (igual que ProductIdentifier.isPrimary, Fase 3):
+# el schema no tiene un indice UNIQUE parcial que fuerce "a lo sumo una imagen primaria por
+# producto", asi que crear varias con isPrimary=true es aceptado. Documentado como decision
+# consciente (no como bug) en docs/catalog.md — forzarlo requeriria un UNIQUE parcial
+# (WHERE isPrimary) o logica de "desmarcar la anterior", fuera de alcance de este hardening.
+
+mutation CreateProductImage($newImageId: UUID!, $productId: UUID!, $url: String!, $type: String!, $isPrimary: Boolean!, $displayOrder: Int!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.update'))"
+      message: "Requiere permiso products.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  productImage_insert(data: { id: $newImageId, productId: $productId, url: $url, type: $type, isPrimary: $isPrimary, displayOrder: $displayOrder })
+  auditLog_insert(data: { action: "PRODUCT_UPDATED", entityType: "Product", entityId: $productId })
+}

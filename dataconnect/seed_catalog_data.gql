@@ -1,0 +1,96 @@
+# Datos de prueba para el Catalogo Maestro (Fase 3). Solo para el emulador local.
+# Ejecutar despues de seed_identity_data.gql (no depende de el, pero los tests de permisos si).
+
+mutation SeedProductType @transaction {
+  # productType_insertMany -> productType_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  productType_up1: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000001", code: "BOOK", name: "Libros", status: "ACTIVE" })
+  productType_up2: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000002", code: "SCHOOL", name: "Escolar", status: "ACTIVE" })
+  productType_up3: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000003", code: "OFFICE", name: "Oficina", status: "ACTIVE" })
+  productType_up4: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000004", code: "COMPUTER", name: "Informatica", status: "ACTIVE" })
+  productType_up5: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000005", code: "TECH_ACCESSORY", name: "Accesorios tecnologicos", status: "ACTIVE" })
+  productType_up6: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000006", code: "DECORATION", name: "Decoracion", status: "ACTIVE" })
+  productType_up7: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000007", code: "GIFT", name: "Regalos", status: "ACTIVE" })
+  productType_up8: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000008", code: "ART", name: "Arte", status: "ACTIVE" })
+  productType_up9: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000009", code: "CRAFT", name: "Manualidades", status: "ACTIVE" })
+  productType_up10: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000010", code: "TOY", name: "Juguetes", status: "ACTIVE" })
+  productType_up11: productType_upsert(data: { id: "60000000-0000-0000-0000-000000000011", code: "OTHER", name: "Otros", status: "ACTIVE" })
+}
+
+mutation SeedUnitOfMeasure @transaction {
+  # unitOfMeasure_insertMany -> unitOfMeasure_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  unitOfMeasure_up12: unitOfMeasure_upsert(data: { id: "61000000-0000-0000-0000-000000000001", code: "UNIT", name: "Unidad", symbol: "u", allowsDecimals: false, status: "ACTIVE" })
+  unitOfMeasure_up13: unitOfMeasure_upsert(data: { id: "61000000-0000-0000-0000-000000000002", code: "PACK", name: "Paquete", symbol: "pack", allowsDecimals: false, status: "ACTIVE" })
+  unitOfMeasure_up14: unitOfMeasure_upsert(data: { id: "61000000-0000-0000-0000-000000000003", code: "BOX", name: "Caja", symbol: "caja", allowsDecimals: false, status: "ACTIVE" })
+  unitOfMeasure_up15: unitOfMeasure_upsert(data: { id: "61000000-0000-0000-0000-000000000004", code: "DOZEN", name: "Docena", symbol: "doc", allowsDecimals: false, status: "ACTIVE" })
+  unitOfMeasure_up16: unitOfMeasure_upsert(data: { id: "61000000-0000-0000-0000-000000000005", code: "REAM", name: "Resma", symbol: "resma", allowsDecimals: false, status: "ACTIVE" })
+  unitOfMeasure_up17: unitOfMeasure_upsert(data: { id: "61000000-0000-0000-0000-000000000006", code: "METER", name: "Metro", symbol: "m", allowsDecimals: true, status: "ACTIVE" })
+  unitOfMeasure_up18: unitOfMeasure_upsert(data: { id: "61000000-0000-0000-0000-000000000007", code: "KILOGRAM", name: "Kilogramo", symbol: "kg", allowsDecimals: true, status: "ACTIVE" })
+}
+
+mutation SeedUnitConversion @transaction {
+  # unitConversion_insertMany -> unitConversion_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  unitConversion_up19: unitConversion_upsert(data: { fromUnitId: "61000000-0000-0000-0000-000000000003", toUnitId: "61000000-0000-0000-0000-000000000001", factor: 12.0 })
+  unitConversion_up20: unitConversion_upsert(data: { fromUnitId: "61000000-0000-0000-0000-000000000004", toUnitId: "61000000-0000-0000-0000-000000000001", factor: 12.0 })
+  unitConversion_up21: unitConversion_upsert(data: { fromUnitId: "61000000-0000-0000-0000-000000000002", toUnitId: "61000000-0000-0000-0000-000000000001", factor: 10.0 })
+}
+
+mutation SeedCurrency @transaction {
+  # currency_insertMany -> currency_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  currency_up22: currency_upsert(data: { id: "62000000-0000-0000-0000-000000000001", code: "NIO", name: "Cordoba", symbol: "C$" })
+  currency_up23: currency_upsert(data: { id: "62000000-0000-0000-0000-000000000002", code: "USD", name: "Dolar estadounidense", symbol: "$" })
+}
+
+mutation SeedTaxCategory @transaction {
+  # taxCategory_insertMany -> taxCategory_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  taxCategory_up24: taxCategory_upsert(data: { id: "63000000-0000-0000-0000-000000000001", code: "EXEMPT", name: "Exento (libros)", ratePercent: 0.0, status: "ACTIVE" })
+  taxCategory_up25: taxCategory_upsert(data: { id: "63000000-0000-0000-0000-000000000002", code: "GENERAL", name: "IVA general", ratePercent: 15.0, status: "ACTIVE" })
+
+  # Categorias jerarquicas (seccion 7/8 del prompt).
+}
+
+mutation SeedCategory @transaction {
+  # category_insertMany -> category_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  category_up26: category_upsert(data: { id: "64000000-0000-0000-0000-000000000001", name: "Libros", code: "CAT-LIBROS", parentId: null, status: "ACTIVE" })
+  category_up27: category_upsert(data: { id: "64000000-0000-0000-0000-000000000002", name: "Literatura", code: "CAT-LITERATURA", parentId: "64000000-0000-0000-0000-000000000001", status: "ACTIVE" })
+  category_up28: category_upsert(data: { id: "64000000-0000-0000-0000-000000000003", name: "Fantasia", code: "CAT-FANTASIA", parentId: "64000000-0000-0000-0000-000000000002", status: "ACTIVE" })
+  category_up29: category_upsert(data: { id: "64000000-0000-0000-0000-000000000004", name: "Escolar", code: "CAT-ESCOLAR", parentId: null, status: "ACTIVE" })
+  category_up30: category_upsert(data: { id: "64000000-0000-0000-0000-000000000005", name: "Cuadernos", code: "CAT-CUADERNOS", parentId: "64000000-0000-0000-0000-000000000004", status: "ACTIVE" })
+  category_up31: category_upsert(data: { id: "64000000-0000-0000-0000-000000000006", name: "Informatica", code: "CAT-INFORMATICA", parentId: null, status: "ACTIVE" })
+  category_up32: category_upsert(data: { id: "64000000-0000-0000-0000-000000000007", name: "Perifericos", code: "CAT-PERIFERICOS", parentId: "64000000-0000-0000-0000-000000000006", status: "ACTIVE" })
+  category_up33: category_upsert(data: { id: "64000000-0000-0000-0000-000000000008", name: "Mouse", code: "CAT-MOUSE", parentId: "64000000-0000-0000-0000-000000000007", status: "ACTIVE" })
+}
+
+mutation SeedBrand @transaction {
+  # brand_insertMany -> brand_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  brand_up34: brand_upsert(data: { id: "65000000-0000-0000-0000-000000000001", name: "Norma", code: "BR-NORMA", status: "ACTIVE" })
+  brand_up35: brand_upsert(data: { id: "65000000-0000-0000-0000-000000000002", name: "Logitech", code: "BR-LOGITECH", status: "ACTIVE" })
+}
+
+mutation SeedPublisher @transaction {
+  # publisher_insertMany -> publisher_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  publisher_up36: publisher_upsert(data: { id: "66000000-0000-0000-0000-000000000001", name: "Salamandra", code: "PUB-SALAMANDRA", status: "ACTIVE" })
+}
+
+mutation SeedAuthor @transaction {
+  # author_insertMany -> author_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  author_up37: author_upsert(data: { id: "67000000-0000-0000-0000-000000000001", firstName: "Joanne", lastName: "Rowling", displayName: "J.K. Rowling", status: "ACTIVE" })
+}
+
+mutation SeedGenre @transaction {
+  # genre_insertMany -> genre_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  genre_up38: genre_upsert(data: { id: "68000000-0000-0000-0000-000000000001", name: "Fantasy", status: "ACTIVE" })
+}
+
+mutation SeedBookSeries @transaction {
+  # bookSeries_insertMany -> bookSeries_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  bookSeries_up39: bookSeries_upsert(data: { id: "69000000-0000-0000-0000-000000000001", name: "Harry Potter", status: "ACTIVE" })
+
+  # Nota: Product/BookDetails/ProductPrice NO se siembran aqui a proposito. Sus columnas
+  # createdBy/updatedBy/createdBy tienen @default(expr:"auth.uid"), que SIEMPRE se evalua
+  # (incluso si el insert intenta pasar un literal) y falla en contexto admin puro (CLI/
+  # dataconnect:execute) porque no hay ningun usuario impersonado. Los productos de prueba se
+  # crean con las mutations reales (CreateProduct/CreateBookDetails/CreateProductPrice)
+  # impersonando a SUPER_ADMIN desde el script de pruebas E2E — ademas de sembrar datos,
+  # eso ejercita las mutations reales igual que en Fase 2. Ver docs/catalog.md.
+}
+

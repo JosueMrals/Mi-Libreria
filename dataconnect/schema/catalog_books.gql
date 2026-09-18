@@ -1,0 +1,107 @@
+# Fase 3 — Book-specific metadata (BookDetails y sus relaciones).
+#
+# Product = entidad comercial universal (ver schema/catalog.gql). BookDetails es informacion
+# ESPECIALIZADA que solo aplica cuando productType = BOOK; el resto de productos no la tocan.
+#
+# Titulo != Edicion != Producto fisico (seccion 25): no se crea una entidad "Edition" separada
+# porque, en este modelo, cada Product+BookDetails YA representa una edicion/publicacion
+# concreta (un ISBN distinto = un Product distinto); "el mismo libro" en otra edicion es
+# simplemente otro Product con su propio BookDetails, opcionalmente compartiendo BookSeries.
+# Evita duplicar Product/BookDetails como capas separadas sin necesidad real todavia.
+
+type Author @table {
+  id: UUID! @default(expr: "uuidV4()")
+  firstName: String @col(dataType: "varchar(80)")
+  middleName: String @col(dataType: "varchar(80)")
+  lastName: String @col(dataType: "varchar(80)")
+  displayName: String! @col(dataType: "varchar(160)")
+  bio: String
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type Publisher @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(150)")
+  code: String! @unique @col(dataType: "varchar(40)")
+  description: String
+  country: String @col(dataType: "varchar(60)")
+  website: String
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type BookSeries @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(150)")
+  description: String
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+}
+
+# Clasificacion bibliografica (seccion 24), independiente de Category (clasificacion comercial).
+type Genre @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @unique @col(dataType: "varchar(80)")
+  description: String
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+}
+
+# BookDetails cuelga 1:1 de Product: la propia relacion "product" es la primary key de la
+# tabla (sin "id" propio), asi que bookDetails_update/_insert usan key:{productId:...}.
+type BookDetails @table(key: ["product"]) {
+  product: Product!
+  title: String! @col(dataType: "varchar(300)")
+  subtitle: String @col(dataType: "varchar(300)")
+  # Normalizados (solo digitos, sin guiones/espacios) antes de llegar aqui — ver
+  # docs/catalog.md#normalizacion. UNIQUE permite multiples NULL (libros sin ese identificador)
+  # pero rechaza duplicados cuando el valor existe (seccion 54).
+  isbn10: String @unique @col(dataType: "varchar(10)")
+  isbn13: String @unique @col(dataType: "varchar(13)")
+  language: String @col(dataType: "varchar(10)")
+  editionNumber: Int
+  publicationDate: Date
+  pageCount: Int
+  # HARDCOVER | PAPERBACK | EBOOK | AUDIOBOOK | BOX_SET | OTHER
+  format: String @col(dataType: "varchar(20)")
+  dimensions: String @col(dataType: "varchar(60)")
+  weight: Float
+  series: BookSeries
+  volumeNumber: Int
+  synopsis: String
+  tableOfContents: String
+  coverImageUrl: String
+  ageRange: String @col(dataType: "varchar(40)")
+  readingLevel: String @col(dataType: "varchar(40)")
+  # Procedencia de metadata externa (seccion 57/58): permite no sobrescribir un cambio manual
+  # con una sincronizacion externa futura sin revisión — ver docs/catalog.md.
+  metadataSource: String @col(dataType: "varchar(40)")
+  metadataSourceId: String @col(dataType: "varchar(120)")
+  metadataFetchedAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type BookAuthor @table(key: ["bookDetails", "author", "authorRole"]) {
+  bookDetails: BookDetails!
+  author: Author!
+  # AUTHOR | TRANSLATOR | EDITOR | ILLUSTRATOR | COMPILER | INTRODUCTION | OTHER
+  authorRole: String! @col(dataType: "varchar(20)")
+  displayOrder: Int!
+}
+
+type BookPublisher @table(key: ["bookDetails", "publisher"]) {
+  bookDetails: BookDetails!
+  publisher: Publisher!
+  isPrimary: Boolean!
+}
+
+type BookGenre @table(key: ["bookDetails", "genre"]) {
+  bookDetails: BookDetails!
+  genre: Genre!
+}

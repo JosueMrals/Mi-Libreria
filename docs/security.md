@@ -86,6 +86,13 @@
 - `AUTH_LOGIN_FAILED`/`SECURITY_ACCESS_DENIED` no tienen mutation cliente-invocable: un intento
   fallido no tiene sesión con la que escribir de forma no forjable. Requieren Cloud
   Functions/Admin SDK sobre logs de Firebase Authentication en una fase posterior.
+- **[Fase 3.1] Imprecisión conocida en `CreateBookDetails`:** por una limitación del emulador
+  local (`WITH` anidado rompe el protocolo — ver `docs/catalog.md#hallazgos-de-plataforma`), el
+  `AuditLog` de esta mutation se inserta como campo separado del `INSERT` nativo condicionado
+  por checksum, así que se registra `BOOK_METADATA_UPDATED` aunque el checksum de ISBN sea
+  inválido y no se haya creado ningún `BookDetails`. `performedByUid` sigue siendo el
+  `auth.uid` real y la acción describe la intención real de la llamada — no es una vía de log
+  forgery, solo una imprecisión de "se intentó" vs. "se completó".
 - **[Fase 2.1] Verificado con pruebas de escalamiento:** ningún usuario sin el permiso
   correspondiente puede insertar/actualizar `UserRole`, `RolePermission`, `UserBranch`, `Role`,
   `Permission` ni cambiar `status` de un `UserProfile` — 9 intentos de escalamiento distintos
@@ -245,3 +252,86 @@ schema completo (`schema.gql`, `identity.gql`, `test_entity.gql`) y ambos connec
 (`example`, `identity`) — detectó y permitió corregir un bug heredado de la Fase 1
 (`schema/test_entity.gql` mezclaba `query`/`mutation` dentro de `schema/`, donde solo se
 permiten definiciones de tipo).
+
+### Fase 3 (Product Catalog) — 33/33, más regresión completa de Fase 2/2.1
+
+Mismo mecanismo de pruebas, ahora contra `dataconnect/catalog/*.gql` (connector `catalog`).
+Categorías: Setup 4/4, Authentication 1/1, User status 2/2, Authorization 21/21, Permission
+escalation 3/3, Audit security 2/2.
+
+Casos representativos:
+
+- **Reutiliza el patrón de Fase 2/2.1 sin cambios estructurales**: anónimo/`INACTIVE`/
+  `SUSPENDED` denegados en `GetProduct`, usuario sin `products.read`/`products.create`
+  denegado, usuario con el permiso correcto permitido.
+- **Separación de precios (sección 31) verificada en runtime**: `MANAGER` (tiene
+  `products.update`, no `prices.update`) intentando `CreateProductPrice` → DENIED; `ADMIN`
+  (tiene `prices.update`) → ALLOWED.
+- **Otro recurso sin permiso**: `SELLER` sin `categories.update` intentando `UpdateCategory` →
+  DENIED.
+- **Duplicados rechazados por constraint, no por lógica de aplicación**: SKU duplicado y
+  ISBN13 duplicado → `violates SQL unique constraint`, ninguna fila corrupta.
+- **Integridad referencial**: `categoryId`/`productTypeId` inexistentes en `CreateProduct`,
+  `productId` inexistente en `CreateBookDetails`/`CreateProductVariant` (huérfanos) →
+  rechazados por `FOREIGN KEY constraint`, no por una validación manual que pudiera olvidarse.
+- **Ciclos de categoría**: auto-referencia (`parentId == newCategoryId`) y ciclo de 2 niveles
+  (mover una categoría bajo su propia nieta) → ambos DENIED; una reorganización normal sin
+  ciclo sigue permitida.
+- **Paginación**: `limit=500` → DENIED (excede el tope de 200); `limit=50` y `limit` omitido
+  (usa el default del schema) → ambos ALLOWED.
+- **Auditoría**: `PRODUCT_CREATED`, `PRICE_CREATED`, `PRODUCT_DEACTIVATED`, `CATEGORY_CREATED`,
+  `BOOK_METADATA_UPDATED` aparecen correctamente en `ListAuditLogs` (connector `identity`,
+  confirmando que ambos connectors comparten la misma tabla `AuditLog`); `NOPERMS` sigue sin
+  poder leerlos.
+
+**Regresión:** Fase 2 y Fase 2.1 se re-ejecutaron completas después de todos los cambios de
+Fase 3, contra la misma base de datos ya poblada con datos de catálogo — sin cambios de
+comportamiento. El resultado 14/15 observado en corridas repetidas contra una base persistente
+fue investigado a fondo en Fase 3.1 (ver sección siguiente) y clasificado como fixture de
+prueba no idempotente, no como regresión de seguridad — corregido en la raíz.
+
+### Fase 3.1 (Data Integrity Hardening) — investigación del 14/15 y endurecimiento
+
+**Investigación del 14/15 de Fase 2 (clasificación pedida explícitamente: fixture no
+idempotente vs. regresión real vs. prueba incorrecta):** el caso 9 (`CreateMyProfile` de
+`NEWUSER`) usaba un `firebaseUid`/`email` fijos (`TEST_FIREBASE_UID_NEWUSER`,
+`newuser@test.local`) en el script de pruebas. Al re-ejecutar el script contra la misma base
+persistente sin reiniciar el emulador, el segundo intento de auto-registro chocaba con el
+`UNIQUE` de `firebaseUid` de una corrida *anterior* del propio script — no del sistema bajo
+prueba. **Clasificación: (A) fixture de prueba no idempotente.** No es (B) una regresión real
+(la lógica de anti-duplicación de `CreateMyProfile` siempre funcionó correctamente — de hecho
+el caso 10, que prueba exactamente esa protección, seguía en PASS) ni (C) una prueba
+incorrecta (la aserción es correcta; solo los datos de entrada no eran únicos por corrida).
+**Corrección en la raíz:** se sufijó `UID.NEWUSER`/`EMAIL.NEWUSER` con un `RUN_ID` aleatorio
+generado una vez por ejecución del script. Reconfirmado 15/15 en múltiples corridas
+consecutivas contra la misma base sin reiniciar el emulador.
+
+**Seeds no idempotentes:** ver `docs/catalog.md#seeds-idempotentes` — causa raíz real
+independiente de lo anterior, corregida convirtiendo `_insertMany` a `_upsert` fila por fila.
+
+**Endurecimiento aplicado en Fase 3.1** (detalle técnico completo en `docs/catalog.md`):
+checksum matemático real de ISBN-10 (mod-11 + dígito `X`)/ISBN-13 (mod-10, pesos 1/3) vía
+Native SQL; validación de `amount`/`priceType` en `CreateProductPrice`/`UpdateProductPrice`
+(negativo, tope de negocio 999999.99, whitelist de `priceType`); `status` de `UpdateProductPrice`
+ahora se aplica de verdad (antes se declaraba y no se usaba); `CreateBookDetails` ahora exige
+`productType = BOOK`; se agregaron `CreateSupplierProduct`/`CreateProductOption`/
+`CreateProductOptionValue`/`CreateProductImage` (no existían) específicamente para poder
+verificar sus constraints de integridad (FK, duplicados por key compuesta) de punta a punta.
+
+**Total final (Fase 2 + Fase 2.1 + Catálogo F3+F3.1): 15 + 41 + 63 = 119/119.** Ningún caso
+oculto ni convertido en warning para forzar un PASS — el detalle de cada categoría está en
+`docs/catalog.md#resultado-de-pruebas-fase-31-checkpoint`.
+
+### Lección de plataforma (Fase 3): variables opcionales omitidas en CEL
+
+Se descubrió, corrigió y verificó un patrón de bug real: cualquier `@check`/`@auth(expr:...)`
+que compare `vars.<campoOpcional> == null` falla la evaluación de CEL (no devuelve `false`)
+cuando el cliente **omite** esa variable en vez de enviarla como `null` explícito — que es el
+comportamiento normal de la mayoría de clientes GraphQL al usar un default del schema. Esto
+afectaba: los checks de paginación (`vars.limit`) de todas las queries de listado del
+connector `catalog`, y los checks de auto-referencia de categoría (`vars.parentId`). Corregido
+en ambos archivos (`catalog/queries.gql`, `catalog/mutations.gql`) reemplazando el patrón por
+`!has(vars.X) || vars.X == null || ...`. Verificado con una prueba explícita
+(`ListProducts` sin pasar `$limit` en absoluto). **Recomendación para fases futuras:** aplicar
+siempre este patrón `has()` cuando un `@check`/`@auth(expr:...)` referencie una variable
+GraphQL opcional.

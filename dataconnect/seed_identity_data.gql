@@ -9,226 +9,341 @@
 # Ejecutar manualmente contra el emulador, por ejemplo con la extension de VS Code de Data
 # Connect o "firebase dataconnect:sql:seed" segun la version de CLI instalada.
 
-mutation @transaction {
-  role_insertMany(
-    data: [
-      { id: "10000000-0000-0000-0000-000000000001", name: "SUPER_ADMIN", description: "Administracion maxima de la aplicacion" }
-      { id: "10000000-0000-0000-0000-000000000002", name: "ADMIN", description: "Administracion operativa" }
-      { id: "10000000-0000-0000-0000-000000000003", name: "MANAGER", description: "Gestion de una sucursal" }
-      { id: "10000000-0000-0000-0000-000000000004", name: "CASHIER", description: "Caja y ventas" }
-      { id: "10000000-0000-0000-0000-000000000005", name: "INVENTORY", description: "Gestion de inventario" }
-      { id: "10000000-0000-0000-0000-000000000006", name: "SELLER", description: "Ventas en piso" }
-      { id: "10000000-0000-0000-0000-000000000007", name: "AUDITOR", description: "Solo lectura de auditoria y reportes" }
-    ]
-  )
+mutation SeedRole @transaction {
+  # role_insertMany -> role_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  role_up1: role_upsert(data: { id: "10000000-0000-0000-0000-000000000001", name: "SUPER_ADMIN", description: "Administracion maxima de la aplicacion" })
+  role_up2: role_upsert(data: { id: "10000000-0000-0000-0000-000000000002", name: "ADMIN", description: "Administracion operativa" })
+  role_up3: role_upsert(data: { id: "10000000-0000-0000-0000-000000000003", name: "MANAGER", description: "Gestion de una sucursal" })
+  role_up4: role_upsert(data: { id: "10000000-0000-0000-0000-000000000004", name: "CASHIER", description: "Caja y ventas" })
+  role_up5: role_upsert(data: { id: "10000000-0000-0000-0000-000000000005", name: "INVENTORY", description: "Gestion de inventario" })
+  role_up6: role_upsert(data: { id: "10000000-0000-0000-0000-000000000006", name: "SELLER", description: "Ventas en piso" })
+  role_up7: role_upsert(data: { id: "10000000-0000-0000-0000-000000000007", name: "AUDITOR", description: "Solo lectura de auditoria y reportes" })
+}
 
-  permission_insertMany(
-    data: [
-      { id: "20000000-0000-0000-0000-000000000001", name: "products.read" }
-      { id: "20000000-0000-0000-0000-000000000002", name: "products.create" }
-      { id: "20000000-0000-0000-0000-000000000003", name: "products.update" }
-      { id: "20000000-0000-0000-0000-000000000004", name: "products.delete" }
-      { id: "20000000-0000-0000-0000-000000000005", name: "sales.read" }
-      { id: "20000000-0000-0000-0000-000000000006", name: "sales.create" }
-      { id: "20000000-0000-0000-0000-000000000007", name: "sales.cancel" }
-      { id: "20000000-0000-0000-0000-000000000008", name: "inventory.read" }
-      { id: "20000000-0000-0000-0000-000000000009", name: "inventory.adjust" }
-      { id: "20000000-0000-0000-0000-000000000010", name: "purchases.read" }
-      { id: "20000000-0000-0000-0000-000000000011", name: "purchases.create" }
-      { id: "20000000-0000-0000-0000-000000000012", name: "purchases.update" }
-      { id: "20000000-0000-0000-0000-000000000013", name: "customers.read" }
-      { id: "20000000-0000-0000-0000-000000000014", name: "customers.create" }
-      { id: "20000000-0000-0000-0000-000000000015", name: "customers.update" }
-      { id: "20000000-0000-0000-0000-000000000016", name: "suppliers.read" }
-      { id: "20000000-0000-0000-0000-000000000017", name: "suppliers.create" }
-      { id: "20000000-0000-0000-0000-000000000018", name: "suppliers.update" }
-      { id: "20000000-0000-0000-0000-000000000019", name: "reports.read" }
-      { id: "20000000-0000-0000-0000-000000000020", name: "users.read" }
-      { id: "20000000-0000-0000-0000-000000000021", name: "users.create" }
-      { id: "20000000-0000-0000-0000-000000000022", name: "users.update" }
-      { id: "20000000-0000-0000-0000-000000000023", name: "users.disable" }
-      { id: "20000000-0000-0000-0000-000000000024", name: "branches.read" }
-      { id: "20000000-0000-0000-0000-000000000025", name: "branches.create" }
-      { id: "20000000-0000-0000-0000-000000000026", name: "branches.update" }
-      { id: "20000000-0000-0000-0000-000000000027", name: "cash.read" }
-      { id: "20000000-0000-0000-0000-000000000028", name: "cash.open" }
-      { id: "20000000-0000-0000-0000-000000000029", name: "cash.close" }
-      { id: "20000000-0000-0000-0000-000000000030", name: "audit.read" }
-      { id: "20000000-0000-0000-0000-000000000031", name: "permissions.manage" }
-      { id: "20000000-0000-0000-0000-000000000032", name: "roles.manage" }
-    ]
-  )
+mutation SeedPermission1 @transaction {
+  # permission_insertMany -> permission_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  # Fase 3 — Product Catalog & Master Data (seccion 47).
+  permission_up101: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000001", name: "products.read" })
+  permission_up102: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000002", name: "products.create" })
+  permission_up103: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000003", name: "products.update" })
+  permission_up104: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000004", name: "products.delete" })
+  permission_up105: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000005", name: "sales.read" })
+  permission_up106: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000006", name: "sales.create" })
+  permission_up107: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000007", name: "sales.cancel" })
+  permission_up108: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000008", name: "inventory.read" })
+  permission_up109: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000009", name: "inventory.adjust" })
+  permission_up110: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000010", name: "purchases.read" })
+  permission_up111: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000011", name: "purchases.create" })
+  permission_up112: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000012", name: "purchases.update" })
+  permission_up113: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000013", name: "customers.read" })
+  permission_up114: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000014", name: "customers.create" })
+  permission_up115: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000015", name: "customers.update" })
+}
 
-  branch_insertMany(
-    data: [
-      { id: "30000000-0000-0000-0000-000000000001", name: "Sucursal Norte", code: "BR-NORTE", status: "ACTIVE" }
-      { id: "30000000-0000-0000-0000-000000000002", name: "Sucursal Central", code: "BR-CENTRAL", status: "ACTIVE" }
-    ]
-  )
+mutation SeedPermission2 @transaction {
+  permission_up116: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000016", name: "suppliers.read" })
+  permission_up117: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000017", name: "suppliers.create" })
+  permission_up118: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000018", name: "suppliers.update" })
+  permission_up119: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000019", name: "reports.read" })
+  permission_up120: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000020", name: "users.read" })
+  permission_up121: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000021", name: "users.create" })
+  permission_up122: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000022", name: "users.update" })
+  permission_up123: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000023", name: "users.disable" })
+  permission_up124: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000024", name: "branches.read" })
+  permission_up125: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000025", name: "branches.create" })
+  permission_up126: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000026", name: "branches.update" })
+  permission_up127: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000027", name: "cash.read" })
+  permission_up128: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000028", name: "cash.open" })
+  permission_up129: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000029", name: "cash.close" })
+  permission_up130: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000030", name: "audit.read" })
+}
 
-  userProfile_insertMany(
-    data: [
-      { id: "40000000-0000-0000-0000-000000000001", firebaseUid: "TEST_FIREBASE_UID_SUPERADMIN", email: "superadmin@test.local", firstName: "Super", lastName: "Admin", status: "ACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000002", firebaseUid: "TEST_FIREBASE_UID_ADMIN", email: "admin@test.local", firstName: "Ana", lastName: "Admin", status: "ACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000003", firebaseUid: "TEST_FIREBASE_UID_MANAGER", email: "manager@test.local", firstName: "Marco", lastName: "Manager", status: "ACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000004", firebaseUid: "TEST_FIREBASE_UID_CASHIER", email: "cashier@test.local", firstName: "Carla", lastName: "Cashier", status: "ACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000005", firebaseUid: "TEST_FIREBASE_UID_INVENTORY", email: "inventory@test.local", firstName: "Ivan", lastName: "Inventory", status: "ACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000006", firebaseUid: "TEST_FIREBASE_UID_SELLER", email: "seller@test.local", firstName: "Sara", lastName: "Seller", status: "ACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000007", firebaseUid: "TEST_FIREBASE_UID_AUDITOR", email: "auditor@test.local", firstName: "Andrea", lastName: "Auditor", status: "ACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000008", firebaseUid: "TEST_FIREBASE_UID_INACTIVE", email: "inactive@test.local", firstName: "Ines", lastName: "Inactive", status: "INACTIVE" }
-      { id: "40000000-0000-0000-0000-000000000009", firebaseUid: "TEST_FIREBASE_UID_SUSPENDED", email: "suspended@test.local", firstName: "Saul", lastName: "Suspended", status: "SUSPENDED" }
-      { id: "40000000-0000-0000-0000-000000000010", firebaseUid: "TEST_FIREBASE_UID_NO_PERMS", email: "noperms@test.local", firstName: "Nadia", lastName: "NoPerms", status: "ACTIVE" }
-    ]
-  )
+mutation SeedPermission3 @transaction {
+  permission_up131: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000031", name: "permissions.manage" })
+  permission_up132: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000032", name: "roles.manage" })
+  permission_up133: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000033", name: "categories.read" })
+  permission_up134: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000034", name: "categories.create" })
+  permission_up135: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000035", name: "categories.update" })
+  permission_up136: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000036", name: "categories.delete" })
+  permission_up137: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000037", name: "brands.read" })
+  permission_up138: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000038", name: "brands.create" })
+  permission_up139: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000039", name: "brands.update" })
+  permission_up140: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000040", name: "brands.delete" })
+  permission_up141: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000041", name: "authors.read" })
+  permission_up142: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000042", name: "authors.create" })
+  permission_up143: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000043", name: "authors.update" })
+  permission_up144: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000044", name: "publishers.read" })
+  permission_up145: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000045", name: "publishers.create" })
+}
 
-  userRole_insertMany(
-    data: [
-      { userProfileId: "40000000-0000-0000-0000-000000000001", roleId: "10000000-0000-0000-0000-000000000001" }
-      { userProfileId: "40000000-0000-0000-0000-000000000002", roleId: "10000000-0000-0000-0000-000000000002" }
-      { userProfileId: "40000000-0000-0000-0000-000000000003", roleId: "10000000-0000-0000-0000-000000000003" }
-      { userProfileId: "40000000-0000-0000-0000-000000000004", roleId: "10000000-0000-0000-0000-000000000004" }
-      { userProfileId: "40000000-0000-0000-0000-000000000005", roleId: "10000000-0000-0000-0000-000000000005" }
-      { userProfileId: "40000000-0000-0000-0000-000000000006", roleId: "10000000-0000-0000-0000-000000000006" }
-      { userProfileId: "40000000-0000-0000-0000-000000000007", roleId: "10000000-0000-0000-0000-000000000007" }
-      { userProfileId: "40000000-0000-0000-0000-000000000008", roleId: "10000000-0000-0000-0000-000000000006" }
-      { userProfileId: "40000000-0000-0000-0000-000000000009", roleId: "10000000-0000-0000-0000-000000000006" }
-    ]
-  )
+mutation SeedPermission4 @transaction {
+  permission_up146: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000046", name: "publishers.update" })
+  permission_up147: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000047", name: "prices.read" })
+  permission_up148: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000048", name: "prices.update" })
+  permission_up149: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000049", name: "book_metadata.read" })
+  permission_up150: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000050", name: "book_metadata.create" })
+  permission_up151: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000051", name: "book_metadata.update" })
+}
 
-  userBranch_insertMany(
-    data: [
-      { userProfileId: "40000000-0000-0000-0000-000000000001", branchId: "30000000-0000-0000-0000-000000000001" }
-      { userProfileId: "40000000-0000-0000-0000-000000000001", branchId: "30000000-0000-0000-0000-000000000002" }
-      { userProfileId: "40000000-0000-0000-0000-000000000002", branchId: "30000000-0000-0000-0000-000000000002" }
-      { userProfileId: "40000000-0000-0000-0000-000000000003", branchId: "30000000-0000-0000-0000-000000000001" }
-      { userProfileId: "40000000-0000-0000-0000-000000000004", branchId: "30000000-0000-0000-0000-000000000001" }
-      { userProfileId: "40000000-0000-0000-0000-000000000005", branchId: "30000000-0000-0000-0000-000000000001" }
-      { userProfileId: "40000000-0000-0000-0000-000000000006", branchId: "30000000-0000-0000-0000-000000000002" }
-      { userProfileId: "40000000-0000-0000-0000-000000000007", branchId: "30000000-0000-0000-0000-000000000001" }
-      { userProfileId: "40000000-0000-0000-0000-000000000007", branchId: "30000000-0000-0000-0000-000000000002" }
-    ]
-  )
+
+mutation SeedBranch @transaction {
+  # branch_insertMany -> branch_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  branch_up8: branch_upsert(data: { id: "30000000-0000-0000-0000-000000000001", name: "Sucursal Norte", code: "BR-NORTE", status: "ACTIVE" })
+  branch_up9: branch_upsert(data: { id: "30000000-0000-0000-0000-000000000002", name: "Sucursal Central", code: "BR-CENTRAL", status: "ACTIVE" })
+}
+
+mutation SeedUserProfile @transaction {
+  # userProfile_insertMany -> userProfile_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  userProfile_up10: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000001", firebaseUid: "TEST_FIREBASE_UID_SUPERADMIN", email: "superadmin@test.local", firstName: "Super", lastName: "Admin", status: "ACTIVE" })
+  userProfile_up11: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000002", firebaseUid: "TEST_FIREBASE_UID_ADMIN", email: "admin@test.local", firstName: "Ana", lastName: "Admin", status: "ACTIVE" })
+  userProfile_up12: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000003", firebaseUid: "TEST_FIREBASE_UID_MANAGER", email: "manager@test.local", firstName: "Marco", lastName: "Manager", status: "ACTIVE" })
+  userProfile_up13: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000004", firebaseUid: "TEST_FIREBASE_UID_CASHIER", email: "cashier@test.local", firstName: "Carla", lastName: "Cashier", status: "ACTIVE" })
+  userProfile_up14: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000005", firebaseUid: "TEST_FIREBASE_UID_INVENTORY", email: "inventory@test.local", firstName: "Ivan", lastName: "Inventory", status: "ACTIVE" })
+  userProfile_up15: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000006", firebaseUid: "TEST_FIREBASE_UID_SELLER", email: "seller@test.local", firstName: "Sara", lastName: "Seller", status: "ACTIVE" })
+  userProfile_up16: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000007", firebaseUid: "TEST_FIREBASE_UID_AUDITOR", email: "auditor@test.local", firstName: "Andrea", lastName: "Auditor", status: "ACTIVE" })
+  userProfile_up17: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000008", firebaseUid: "TEST_FIREBASE_UID_INACTIVE", email: "inactive@test.local", firstName: "Ines", lastName: "Inactive", status: "INACTIVE" })
+  userProfile_up18: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000009", firebaseUid: "TEST_FIREBASE_UID_SUSPENDED", email: "suspended@test.local", firstName: "Saul", lastName: "Suspended", status: "SUSPENDED" })
+  userProfile_up19: userProfile_upsert(data: { id: "40000000-0000-0000-0000-000000000010", firebaseUid: "TEST_FIREBASE_UID_NO_PERMS", email: "noperms@test.local", firstName: "Nadia", lastName: "NoPerms", status: "ACTIVE" })
+}
+
+mutation SeedUserRole @transaction {
+  # userRole_insertMany -> userRole_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  userRole_up20: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000001", roleId: "10000000-0000-0000-0000-000000000001" })
+  userRole_up21: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000002", roleId: "10000000-0000-0000-0000-000000000002" })
+  userRole_up22: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000003", roleId: "10000000-0000-0000-0000-000000000003" })
+  userRole_up23: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000004", roleId: "10000000-0000-0000-0000-000000000004" })
+  userRole_up24: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000005", roleId: "10000000-0000-0000-0000-000000000005" })
+  userRole_up25: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000006", roleId: "10000000-0000-0000-0000-000000000006" })
+  userRole_up26: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000007", roleId: "10000000-0000-0000-0000-000000000007" })
+  userRole_up27: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000008", roleId: "10000000-0000-0000-0000-000000000006" })
+  userRole_up28: userRole_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000009", roleId: "10000000-0000-0000-0000-000000000006" })
+}
+
+mutation SeedUserBranch @transaction {
+  # userBranch_insertMany -> userBranch_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  userBranch_up29: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000001", branchId: "30000000-0000-0000-0000-000000000001" })
+  userBranch_up30: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000001", branchId: "30000000-0000-0000-0000-000000000002" })
+  userBranch_up31: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000002", branchId: "30000000-0000-0000-0000-000000000002" })
+  userBranch_up32: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000003", branchId: "30000000-0000-0000-0000-000000000001" })
+  userBranch_up33: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000004", branchId: "30000000-0000-0000-0000-000000000001" })
+  userBranch_up34: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000005", branchId: "30000000-0000-0000-0000-000000000001" })
+  userBranch_up35: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000006", branchId: "30000000-0000-0000-0000-000000000002" })
+  userBranch_up36: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000007", branchId: "30000000-0000-0000-0000-000000000001" })
+  userBranch_up37: userBranch_upsert(data: { userProfileId: "40000000-0000-0000-0000-000000000007", branchId: "30000000-0000-0000-0000-000000000002" })
 
   # Matriz Role -> Permission. Ver docs/authorization-matrix.md para la version documentada.
-  rolePermission_insertMany(
-    data: [
-      # SUPER_ADMIN: todos los permisos (autoridad total via datos, no via "if role == SUPER_ADMIN").
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000001" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000002" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000003" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000004" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000005" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000006" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000007" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000008" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000009" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000010" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000011" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000012" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000013" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000014" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000015" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000016" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000017" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000018" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000019" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000020" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000021" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000022" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000023" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000024" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000025" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000026" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000027" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000028" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000029" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000030" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000031" }
-      { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000032" }
-
-      # ADMIN: todo el negocio, usuarios y sucursales. NO permissions.manage/roles.manage
-      # (evita que un ADMIN se auto-otorgue permisos o cree roles nuevos sin SUPER_ADMIN).
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000001" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000002" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000003" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000004" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000005" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000006" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000007" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000008" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000009" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000010" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000011" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000012" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000013" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000014" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000015" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000016" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000017" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000018" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000019" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000020" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000021" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000022" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000023" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000024" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000025" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000026" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000027" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000028" }
-      { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000029" }
-
-      # MANAGER: operacion completa de una sucursal, sin administracion de usuarios/roles.
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000001" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000002" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000003" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000005" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000006" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000007" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000008" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000009" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000010" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000011" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000012" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000013" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000014" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000015" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000016" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000019" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000020" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000024" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000027" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000028" }
-      { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000029" }
-
-      # CASHIER
-      { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000005" }
-      { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000006" }
-      { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000013" }
-      { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000027" }
-      { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000028" }
-      { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000029" }
-
-      # INVENTORY
-      { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000001" }
-      { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000008" }
-      { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000009" }
-      { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000010" }
-      { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000011" }
-      { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000016" }
-
-      # SELLER
-      { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000001" }
-      { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000005" }
-      { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000006" }
-      { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000013" }
-      { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000014" }
-
-      # AUDITOR: solo lectura de auditoria/reportes/usuarios/sucursales.
-      { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000019" }
-      { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000020" }
-      { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000024" }
-      { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000030" }
-    ]
-  )
 }
+
+mutation SeedRolePermission1 @transaction {
+  # rolePermission_insertMany -> rolePermission_upsert por fila (idempotente: Fase 3.1, seccion 2).
+  # SUPER_ADMIN: todos los permisos (autoridad total via datos, no via "if role == SUPER_ADMIN").
+  # ADMIN: todo el negocio, usuarios y sucursales. NO permissions.manage/roles.manage
+  # (evita que un ADMIN se auto-otorgue permisos o cree roles nuevos sin SUPER_ADMIN).
+  # MANAGER: operacion completa de una sucursal, sin administracion de usuarios/roles.
+  # CASHIER
+  # INVENTORY
+  # SELLER
+  # AUDITOR: solo lectura de auditoria/reportes/usuarios/sucursales/catalogo.
+  rolePermission_up301: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000001" })
+  rolePermission_up302: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000002" })
+  rolePermission_up303: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000003" })
+  rolePermission_up304: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000004" })
+  rolePermission_up305: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000005" })
+  rolePermission_up306: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000006" })
+  rolePermission_up307: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000007" })
+  rolePermission_up308: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000008" })
+  rolePermission_up309: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000009" })
+  rolePermission_up310: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000010" })
+  rolePermission_up311: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000011" })
+  rolePermission_up312: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000012" })
+  rolePermission_up313: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000013" })
+  rolePermission_up314: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000014" })
+  rolePermission_up315: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000015" })
+}
+
+mutation SeedRolePermission2 @transaction {
+  rolePermission_up316: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000016" })
+  rolePermission_up317: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000017" })
+  rolePermission_up318: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000018" })
+  rolePermission_up319: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000019" })
+  rolePermission_up320: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000020" })
+  rolePermission_up321: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000021" })
+  rolePermission_up322: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000022" })
+  rolePermission_up323: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000023" })
+  rolePermission_up324: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000024" })
+  rolePermission_up325: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000025" })
+  rolePermission_up326: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000026" })
+  rolePermission_up327: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000027" })
+  rolePermission_up328: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000028" })
+  rolePermission_up329: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000029" })
+  rolePermission_up330: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000030" })
+}
+
+mutation SeedRolePermission3 @transaction {
+  rolePermission_up331: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000031" })
+  rolePermission_up332: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000032" })
+  rolePermission_up333: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000033" })
+  rolePermission_up334: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000034" })
+  rolePermission_up335: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000035" })
+  rolePermission_up336: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000036" })
+  rolePermission_up337: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000037" })
+  rolePermission_up338: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000038" })
+  rolePermission_up339: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000039" })
+  rolePermission_up340: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000040" })
+  rolePermission_up341: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000041" })
+  rolePermission_up342: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000042" })
+  rolePermission_up343: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000043" })
+  rolePermission_up344: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000044" })
+  rolePermission_up345: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000045" })
+}
+
+mutation SeedRolePermission4 @transaction {
+  rolePermission_up346: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000046" })
+  rolePermission_up347: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000047" })
+  rolePermission_up348: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000048" })
+  rolePermission_up349: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000049" })
+  rolePermission_up350: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000050" })
+  rolePermission_up351: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000051" })
+  rolePermission_up352: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000001" })
+  rolePermission_up353: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000002" })
+  rolePermission_up354: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000003" })
+  rolePermission_up355: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000004" })
+  rolePermission_up356: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000005" })
+  rolePermission_up357: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000006" })
+  rolePermission_up358: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000007" })
+  rolePermission_up359: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000008" })
+  rolePermission_up360: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000009" })
+}
+
+mutation SeedRolePermission5 @transaction {
+  rolePermission_up361: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000010" })
+  rolePermission_up362: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000011" })
+  rolePermission_up363: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000012" })
+  rolePermission_up364: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000013" })
+  rolePermission_up365: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000014" })
+  rolePermission_up366: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000015" })
+  rolePermission_up367: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000016" })
+  rolePermission_up368: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000017" })
+  rolePermission_up369: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000018" })
+  rolePermission_up370: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000019" })
+  rolePermission_up371: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000020" })
+  rolePermission_up372: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000021" })
+  rolePermission_up373: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000022" })
+  rolePermission_up374: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000023" })
+  rolePermission_up375: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000024" })
+}
+
+mutation SeedRolePermission6 @transaction {
+  rolePermission_up376: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000025" })
+  rolePermission_up377: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000026" })
+  rolePermission_up378: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000027" })
+  rolePermission_up379: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000028" })
+  rolePermission_up380: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000029" })
+  rolePermission_up381: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000033" })
+  rolePermission_up382: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000034" })
+  rolePermission_up383: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000035" })
+  rolePermission_up384: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000036" })
+  rolePermission_up385: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000037" })
+  rolePermission_up386: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000038" })
+  rolePermission_up387: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000039" })
+  rolePermission_up388: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000040" })
+  rolePermission_up389: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000041" })
+  rolePermission_up390: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000042" })
+}
+
+mutation SeedRolePermission7 @transaction {
+  rolePermission_up391: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000043" })
+  rolePermission_up392: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000044" })
+  rolePermission_up393: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000045" })
+  rolePermission_up394: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000046" })
+  rolePermission_up395: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000047" })
+  rolePermission_up396: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000048" })
+  rolePermission_up397: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000049" })
+  rolePermission_up398: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000050" })
+  rolePermission_up399: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000051" })
+  rolePermission_up400: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000001" })
+  rolePermission_up401: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000002" })
+  rolePermission_up402: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000003" })
+  rolePermission_up403: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000005" })
+  rolePermission_up404: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000006" })
+  rolePermission_up405: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000007" })
+}
+
+mutation SeedRolePermission8 @transaction {
+  rolePermission_up406: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000008" })
+  rolePermission_up407: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000009" })
+  rolePermission_up408: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000010" })
+  rolePermission_up409: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000011" })
+  rolePermission_up410: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000012" })
+  rolePermission_up411: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000013" })
+  rolePermission_up412: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000014" })
+  rolePermission_up413: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000015" })
+  rolePermission_up414: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000016" })
+  rolePermission_up415: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000019" })
+  rolePermission_up416: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000020" })
+  rolePermission_up417: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000024" })
+  rolePermission_up418: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000027" })
+  rolePermission_up419: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000028" })
+  rolePermission_up420: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000029" })
+}
+
+mutation SeedRolePermission9 @transaction {
+  rolePermission_up421: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000033" })
+  rolePermission_up422: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000034" })
+  rolePermission_up423: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000035" })
+  rolePermission_up424: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000037" })
+  rolePermission_up425: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000038" })
+  rolePermission_up426: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000039" })
+  rolePermission_up427: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000041" })
+  rolePermission_up428: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000044" })
+  rolePermission_up429: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000047" })
+  rolePermission_up430: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000049" })
+  rolePermission_up431: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000050" })
+  rolePermission_up432: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000051" })
+  rolePermission_up433: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000005" })
+  rolePermission_up434: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000006" })
+  rolePermission_up435: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000013" })
+}
+
+mutation SeedRolePermission10 @transaction {
+  rolePermission_up436: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000027" })
+  rolePermission_up437: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000028" })
+  rolePermission_up438: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000029" })
+  rolePermission_up439: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000033" })
+  rolePermission_up440: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000004", permissionId: "20000000-0000-0000-0000-000000000037" })
+  rolePermission_up441: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000001" })
+  rolePermission_up442: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000008" })
+  rolePermission_up443: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000009" })
+  rolePermission_up444: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000010" })
+  rolePermission_up445: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000011" })
+  rolePermission_up446: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000016" })
+  rolePermission_up447: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000033" })
+  rolePermission_up448: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000037" })
+  rolePermission_up449: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000001" })
+  rolePermission_up450: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000005" })
+}
+
+mutation SeedRolePermission11 @transaction {
+  rolePermission_up451: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000006" })
+  rolePermission_up452: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000013" })
+  rolePermission_up453: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000014" })
+  rolePermission_up454: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000033" })
+  rolePermission_up455: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000037" })
+  rolePermission_up456: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000041" })
+  rolePermission_up457: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000006", permissionId: "20000000-0000-0000-0000-000000000044" })
+  rolePermission_up458: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000019" })
+  rolePermission_up459: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000020" })
+  rolePermission_up460: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000024" })
+  rolePermission_up461: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000030" })
+  rolePermission_up462: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000033" })
+  rolePermission_up463: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000037" })
+  rolePermission_up464: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000041" })
+  rolePermission_up465: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000044" })
+}
+
+mutation SeedRolePermission12 @transaction {
+  rolePermission_up466: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000047" })
+  rolePermission_up467: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000049" })
+}
+
+

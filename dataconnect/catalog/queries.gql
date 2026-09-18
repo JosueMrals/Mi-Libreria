@@ -1,0 +1,452 @@
+# Catalog (Fase 3) — queries.
+#
+# Reutiliza exactamente el patron de autorizacion de Fase 2 (dataconnect/identity/): permiso
+# concreto via @check sobre userProfiles(where:{firebaseUid:{eq_expr:"auth.uid"}}), usando
+# indexado this[0] (no this.exists(u,...)) para no superar el limite de anidamiento de CEL de
+# 2 niveles ya detectado en Fase 2 (r.exists(...p.exists(...))).
+#
+# Catalogo de referencia sin permiso especifico (igual razonamiento que ListRoles/
+# ListPermissions en Fase 2: no exponen datos de negocio ni de otros usuarios, y la seccion 47
+# no define "productTypes.read"/"unitsOfMeasure.read"/"currencies.read"/"genres.read"/
+# "bookSeries.read"): ListProductTypes, ListUnitsOfMeasure, ListCurrencies, ListGenres,
+# ListBookSeries. Solo exigen sesion ACTIVE.
+#
+# Toda lista/busqueda tiene limite obligatorio (seccion 43): "limit" nunca es opcional sin
+# tope; el propio @check rechaza limit > 200 ademas del permiso, para que un cliente no pueda
+# pedir el catalogo completo de una vez ("fail closed" tambien aplica a paginacion).
+
+# ---------- Catalogo de referencia (ACTIVE, sin permiso especifico) ----------
+
+query ListProductTypes @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+  }
+  productTypes(where: { status: { eq: "ACTIVE" } }) {
+    id
+    code
+    name
+    description
+  }
+}
+
+query ListUnitsOfMeasure @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+  }
+  unitOfMeasures(where: { status: { eq: "ACTIVE" } }) {
+    id
+    code
+    name
+    symbol
+    allowsDecimals
+  }
+}
+
+query ListCurrencies @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+  }
+  currencies {
+    id
+    code
+    name
+    symbol
+  }
+}
+
+query ListGenres @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+  }
+  genres(where: { status: { eq: "ACTIVE" } }) {
+    id
+    name
+    description
+  }
+}
+
+query ListBookSeries @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+    expr: "this.exists(u, u.status == 'ACTIVE')"
+    message: "El perfil no esta activo"
+  ) {
+    status
+  }
+  bookSeriess {
+    id
+    name
+    description
+    status
+  }
+}
+
+# ---------- Categorias (categories.read) ----------
+
+query ListRootCategories($limit: Int = 50) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'categories.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso categories.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  categories(where: { parentId: { isNull: true } }, limit: $limit) {
+    id
+    name
+    code
+    description
+    status
+  }
+}
+
+query ListCategoryChildren($parentId: UUID!, $limit: Int = 50) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'categories.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso categories.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  categories(where: { parentId: { eq: $parentId } }, limit: $limit) {
+    id
+    name
+    code
+    description
+    status
+  }
+}
+
+# ---------- Marcas (brands.read) ----------
+
+query ListBrands($limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'brands.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso brands.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  brands(where: { status: { eq: "ACTIVE" } }, limit: $limit, offset: $offset) {
+    id
+    name
+    code
+    description
+    website
+  }
+}
+
+# ---------- Autores (authors.read) ----------
+
+query ListAuthors($limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'authors.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso authors.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  authors(where: { status: { eq: "ACTIVE" } }, limit: $limit, offset: $offset) {
+    id
+    displayName
+    firstName
+    lastName
+    bio
+  }
+}
+
+# ---------- Editoriales (publishers.read) ----------
+
+query ListPublishers($limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'publishers.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso publishers.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  publishers(where: { status: { eq: "ACTIVE" } }, limit: $limit, offset: $offset) {
+    id
+    name
+    code
+    country
+    website
+  }
+}
+
+# ---------- Proveedores (suppliers.read — permiso ya existente desde Fase 2) ----------
+
+query ListSuppliers($limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'suppliers.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso suppliers.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  suppliers(where: { status: { eq: "ACTIVE" } }, limit: $limit, offset: $offset) {
+    id
+    name
+    legalName
+    email
+    phone
+  }
+}
+
+# ---------- Product (products.read — permiso ya existente desde Fase 2) ----------
+
+query GetProduct($id: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read'))"
+    message: "Requiere permiso products.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  product(id: $id) {
+    id
+    sku
+    name
+    shortName
+    description
+    status
+    isSellable
+    isPurchasable
+    isInventoried
+    productType { id code name }
+    category { id name code }
+    brand { id name code }
+    unitOfMeasure { id code name symbol }
+    taxCategory { id code name ratePercent }
+    createdAt
+    updatedAt
+  }
+}
+
+query GetProductBySKU($sku: String!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read'))"
+    message: "Requiere permiso products.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  products(where: { sku: { eq: $sku } }) {
+    id
+    sku
+    name
+    status
+    productType { code }
+    category { name }
+    brand { name }
+  }
+}
+
+# Barcode unificado: EAN | UPC | GTIN | SUPPLIER_CODE | INTERNAL_CODE | SKU, todos via
+# ProductIdentifier (seccion 15: no asumir 1 Product = 1 barcode).
+query GetProductByBarcode($value: String!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read'))"
+    message: "Requiere permiso products.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  productIdentifiers(where: { value: { eq: $value } }) {
+    type
+    value
+    isPrimary
+    product {
+      id
+      sku
+      name
+      status
+    }
+  }
+}
+
+query GetProductByISBN($isbn: String!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read'))"
+    message: "Requiere permiso products.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  byIsbn13: bookDetailss(where: { isbn13: { eq: $isbn } }) {
+    product { id sku name status }
+    title
+    isbn10
+    isbn13
+  }
+  byIsbn10: bookDetailss(where: { isbn10: { eq: $isbn } }) {
+    product { id sku name status }
+    title
+    isbn10
+    isbn13
+  }
+}
+
+query SearchProducts($text: String!, $limit: Int = 20, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso products.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  products(
+    where: { _or: [{ name: { contains: $text } }, { sku: { contains: $text } }] }
+    limit: $limit
+    offset: $offset
+  ) {
+    id
+    sku
+    name
+    status
+    productType { code }
+  }
+}
+
+query ListProducts($limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso products.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  products(limit: $limit, offset: $offset, orderBy: { createdAt: DESC }) {
+    id
+    sku
+    name
+    status
+    productType { code }
+    category { name }
+    brand { name }
+  }
+}
+
+query ListProductsByCategory($categoryId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read')) && ((!has(vars.limit) || vars.limit == null) || vars.limit <= 200)"
+    message: "Requiere permiso products.read (limite maximo 200)"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  products(where: { categoryId: { eq: $categoryId } }, limit: $limit, offset: $offset) {
+    id
+    sku
+    name
+    status
+  }
+}
+
+query ListProductVariants($productId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read'))"
+    message: "Requiere permiso products.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  productVariants(where: { productId: { eq: $productId } }) {
+    id
+    sku
+    status
+    productVariantOptionValues_on_productVariant {
+      productOptionValue {
+        value
+        productOption { name }
+      }
+    }
+  }
+}
+
+query ListProductIdentifiers($productId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'products.read'))"
+    message: "Requiere permiso products.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  productIdentifiers(where: { productId: { eq: $productId } }) {
+    id
+    type
+    value
+    isPrimary
+  }
+}
+
+# ---------- Precios (prices.read — separado de products.read, seccion 31) ----------
+
+query ListProductPrices($productId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'prices.read'))"
+    message: "Requiere permiso prices.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  productPrices(where: { productId: { eq: $productId } }, orderBy: { validFrom: DESC }) {
+    id
+    priceType
+    amount
+    currency { code symbol }
+    validFrom
+    validTo
+    status
+  }
+}
+
+# ---------- Metadata bibliografica (book_metadata.read — separado de products.read) ----------
+
+query GetBookDetails($productId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'book_metadata.read'))"
+    message: "Requiere permiso book_metadata.read"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+  }
+  bookDetails(key: { productId: $productId }) {
+    title
+    subtitle
+    isbn10
+    isbn13
+    language
+    editionNumber
+    publicationDate
+    pageCount
+    format
+    synopsis
+    coverImageUrl
+    series { id name }
+    volumeNumber
+    bookAuthors_on_bookDetails {
+      authorRole
+      displayOrder
+      author { id displayName }
+    }
+    bookPublishers_on_bookDetails {
+      isPrimary
+      publisher { id name }
+    }
+    bookGenres_on_bookDetails {
+      genre { id name }
+    }
+  }
+}

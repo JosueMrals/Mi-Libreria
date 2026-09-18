@@ -1,0 +1,231 @@
+# Fase 3 — Product Catalog & Master Data.
+#
+# Principio (seccion 2 del prompt): Product es la entidad comercial universal. Un libro no es
+# una entidad distinta de un mouse: ambos son Product, y un libro ademas tiene BookDetails.
+#
+# Separacion estricta (seccion 3/49): este archivo responde "que es este producto", nunca
+# "cuanto hay" (Inventario, Fase 4), "cuanto se vendio" (Ventas, Fase 5) ni "a quien se compro"
+# (Compras). SupplierProduct/ProductPrice preparan esas fases sin implementarlas.
+#
+# Branch scope (seccion 48): Product es GLOBAL, no se duplica por sucursal.
+
+# ---------- Catalogos de apoyo ----------
+
+type ProductType @table {
+  id: UUID! @default(expr: "uuidV4()")
+  code: String! @unique @col(dataType: "varchar(30)")
+  name: String! @col(dataType: "varchar(80)")
+  description: String
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Jerarquica via parent (self-relation). Prevencion de ciclos: ver
+# dataconnect/catalog/mutations.gql (CreateCategory/UpdateCategory) y docs/catalog.md — el
+# check es de profundidad acotada (6 niveles), no deteccion de ciclo arbitraria; una recursion
+# real requeriria un CTE recursivo, fuera del alcance de @check/CEL hoy.
+type Category @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(120)")
+  code: String! @unique @col(dataType: "varchar(40)")
+  description: String
+  parent: Category
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type Brand @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(120)")
+  # Unica cuando existe; nullable porque no todas las marcas tienen codigo formal.
+  code: String @unique @col(dataType: "varchar(40)")
+  description: String
+  website: String
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type UnitOfMeasure @table {
+  id: UUID! @default(expr: "uuidV4()")
+  code: String! @unique @col(dataType: "varchar(20)")
+  name: String! @col(dataType: "varchar(60)")
+  symbol: String @col(dataType: "varchar(10)")
+  allowsDecimals: Boolean!
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+}
+
+# Preparacion de arquitectura (seccion 12): solo almacena el factor de conversion. No hay
+# logica de conversion de inventario todavia (eso es Fase 4).
+type UnitConversion @table(key: ["fromUnit", "toUnit"]) {
+  fromUnit: UnitOfMeasure!
+  toUnit: UnitOfMeasure!
+  # Ej.: fromUnit=BOX, toUnit=UNIT, factor=12 significa 1 BOX = 12 UNIT.
+  factor: Float!
+}
+
+# El prompt (seccion 4) pide "taxCategoryId" como campo de Product sin describir la entidad.
+# Se crea minima aqui para que el FK tenga un destino real; el modelo de impuestos completo
+# queda fuera de alcance de esta fase (nullable en Product, ver mas abajo).
+type TaxCategory @table {
+  id: UUID! @default(expr: "uuidV4()")
+  code: String! @unique @col(dataType: "varchar(30)")
+  name: String! @col(dataType: "varchar(80)")
+  ratePercent: Float
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+}
+
+# Preparacion (seccion 32): sin conversion automatica de monedas todavia.
+# id: UUID (no "code" como PK) — Data Connect exige que el campo referenciado por una relacion
+# sea UUID; el codigo ISO 4217 (NIO, USD) queda como columna @unique de todas formas.
+type Currency @table {
+  id: UUID! @default(expr: "uuidV4()")
+  code: String! @unique @col(dataType: "varchar(3)")
+  name: String! @col(dataType: "varchar(40)")
+  symbol: String @col(dataType: "varchar(5)")
+}
+
+type Supplier @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(150)")
+  legalName: String
+  taxId: String @col(dataType: "varchar(40)")
+  email: String
+  phone: String @col(dataType: "varchar(30)")
+  address: String
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# ---------- Product (entidad comercial universal) ----------
+
+type Product @table {
+  id: UUID! @default(expr: "uuidV4()")
+  sku: String! @unique @col(dataType: "varchar(40)")
+  name: String! @col(dataType: "varchar(200)")
+  shortName: String @col(dataType: "varchar(80)")
+  description: String
+  productType: ProductType!
+  # Nullable: un producto puede darse de alta antes de terminar de clasificarlo.
+  category: Category
+  # Nullable a proposito (seccion 10): no todos los productos tienen marca.
+  brand: Brand
+  unitOfMeasure: UnitOfMeasure!
+  # Nullable: modelo de impuestos completo queda fuera de esta fase.
+  taxCategory: TaxCategory
+  # ACTIVE | INACTIVE | DISCONTINUED
+  status: String! @col(dataType: "varchar(20)")
+  isSellable: Boolean!
+  isPurchasable: Boolean!
+  isInventoried: Boolean!
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+  # Igual patron que AuditLog.performedByUid (Fase 2): String = firebaseUid, resuelto por
+  # servidor, nunca declarado como variable de cliente en las mutations.
+  createdBy: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+  updatedBy: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+}
+
+# Multiples identificadores por producto (seccion 13/15): EAN, UPC, ISBN10/13, GTIN, codigos de
+# proveedor/internos. SKU vive tambien como columna directa en Product (lookup rapido); aqui
+# puede registrarse ademas como identificador mas para trazabilidad/busqueda unificada.
+type ProductIdentifier @table(key: ["type", "value"]) {
+  id: UUID! @default(expr: "uuidV4()")
+  product: Product!
+  # SKU | EAN | UPC | ISBN10 | ISBN13 | GTIN | SUPPLIER_CODE | INTERNAL_CODE
+  type: String! @col(dataType: "varchar(20)")
+  value: String! @col(dataType: "varchar(64)")
+  isPrimary: Boolean!
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ---------- Variantes (seccion 26/27) ----------
+
+type ProductOption @table {
+  id: UUID! @default(expr: "uuidV4()")
+  name: String! @col(dataType: "varchar(60)")
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+}
+
+type ProductOptionValue @table(key: ["productOption", "value"]) {
+  productOption: ProductOption!
+  value: String! @col(dataType: "varchar(60)")
+}
+
+type ProductVariant @table {
+  id: UUID! @default(expr: "uuidV4()")
+  product: Product!
+  sku: String @unique @col(dataType: "varchar(40)")
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+type ProductVariantOptionValue @table(key: ["productVariant", "productOptionValue"]) {
+  productVariant: ProductVariant!
+  # constraintName explicito: el auto-generado excede el limite de 63 bytes de Postgres porque
+  # ProductOptionValue tiene una key compuesta (productOption + value).
+  productOptionValue: ProductOptionValue! @ref(constraintName: "pvov_option_value_fkey")
+}
+
+# ---------- Pricing (seccion 30/31: separado de Product, permisos propios) ----------
+
+type ProductPrice @table {
+  id: UUID! @default(expr: "uuidV4()")
+  product: Product!
+  # COST | RETAIL | WHOLESALE | PROMOTIONAL
+  priceType: String! @col(dataType: "varchar(20)")
+  # Fase 1, seccion 17: nunca float/double para dinero. Data Connect no expone un escalar
+  # Decimal/Numeric en GraphQL (solo String/Int/Float/Boolean/UUID/Int64/Date/Timestamp/Vector/
+  # Any), asi que el tipo GraphQL queda Float, pero @col fuerza NUMERIC real en Postgres — el
+  # almacenamiento es exacto aunque el transporte GraphQL sea un Float.
+  amount: Float! @col(dataType: "numeric(12,2)")
+  currency: Currency!
+  validFrom: Timestamp! @default(expr: "request.time")
+  validTo: Timestamp
+  # ACTIVE | INACTIVE
+  status: String! @col(dataType: "varchar(20)")
+  createdBy: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+}
+
+# ---------- Imagenes (seccion 33/34/59) ----------
+
+type ProductImage @table {
+  id: UUID! @default(expr: "uuidV4()")
+  product: Product!
+  url: String!
+  storagePath: String
+  # COVER | PRODUCT | THUMBNAIL | OTHER
+  type: String! @col(dataType: "varchar(20)")
+  isPrimary: Boolean!
+  displayOrder: Int!
+  # Metadata de procedencia (seccion 59): si la imagen vino de un proveedor externo (portada de
+  # libro), documentar la fuente en vez de asumir derechos de redistribucion.
+  source: String @col(dataType: "varchar(40)")
+  sourceUrl: String
+  createdAt: Timestamp! @default(expr: "request.time")
+}
+
+# ---------- Proveedores de producto (prepara Compras, Fase 6) ----------
+
+type SupplierProduct @table(key: ["supplier", "product"]) {
+  supplier: Supplier!
+  product: Product!
+  supplierSku: String @col(dataType: "varchar(60)")
+  supplierBarcode: String @col(dataType: "varchar(64)")
+  purchasePrice: Float @col(dataType: "numeric(12,2)")
+  minimumOrderQuantity: Int
+  leadTimeDays: Int
+  isPreferred: Boolean!
+}

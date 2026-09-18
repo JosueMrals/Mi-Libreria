@@ -126,6 +126,67 @@ identidad de otra persona antes de que esa persona se registre.
 administrativa. Probado: `NOPERMS` intentando esto es rechazado con `Requiere permiso
 users.create`.
 
+## Amenazas del Catálogo (Fase 3)
+
+## 13. Ciclo de categorías (`A → B → C → A`)
+
+**Impacto:** una jerarquía circular rompe cualquier recorrido de árbol (breadcrumbs, cálculo de
+ruta completa) en un bucle infinito.
+**Mitigación:** auto-referencia rechazada por comparación de variables (`parentId !=
+newCategoryId/categoryId`, sin consulta a la base); ciclos con ancestros rechazados
+consultando hasta 3 niveles de `parent.parent.parent` del nuevo padre propuesto. Probado:
+mover una categoría bajo su propia nieta (2 niveles) → DENIED.
+**Límite documentado:** la detección no cubre ciclos de más de 3 niveles de profundidad (ver
+`docs/catalog.md`) — limitación real de CEL (sin recursión), no un descuido.
+
+## 14. Producto/metadata huérfana o con referencia inválida
+
+**Impacto:** un `BookDetails`/`ProductVariant` sin `Product` real, o un `Product` con
+`categoryId`/`productTypeId` que no existe, corrompe cualquier reporte o vista que asuma
+integridad referencial.
+**Mitigación:** las relaciones son `FOREIGN KEY` reales de PostgreSQL, no una validación de
+aplicación que pudiera olvidarse en una mutation nueva. Probado: los 4 casos (categoría
+inválida, tipo inválido, `BookDetails` huérfano, `ProductVariant` huérfano) rechazados por
+`violates SQL foreign key constraint`, no por un mensaje de `@check`.
+
+## 15. Escalamiento de precio vía edición de producto
+
+**Impacto:** un usuario con `products.update` (pero sin `prices.update`) intenta modificar el
+precio de venta editando el producto en vez de la mutation de precio dedicada.
+**Mitigación:** `UpdateProduct` no acepta ningún campo de precio/costo en su firma — no existe
+forma de tocar `ProductPrice` a través de esa mutation, con o sin permiso. Probado: `MANAGER`
+(tiene `products.update`) intentando `CreateProductPrice` directamente → DENIED por falta de
+`prices.update`.
+
+## Amenazas de integridad de datos (Fase 3.1)
+
+## 16. Monto de precio inválido o malicioso (`CreateProductPrice`/`UpdateProductPrice`)
+
+**Impacto:** un cliente envía `amount` negativo, un `priceType` arbitrario fuera del dominio de
+negocio, o un valor que fuerza un overflow a nivel de columna (`numeric(12,2)`), corrompiendo el
+modelo de precios o degradando la conexión de base de datos.
+**Mitigación:** `@check` rechaza `amount < 0`, `amount > 999999.99` (tope de negocio, ver
+`docs/catalog.md` para por qué es menor que la capacidad cruda de la columna) y `priceType`
+fuera de `['COST','RETAIL','WHOLESALE','PROMOTIONAL']`, antes de que el valor llegue a
+PostgreSQL. Probado: negativo, excesivo y `priceType` inventado → los 3 DENIED.
+
+## 17. ISBN sin checksum válido pero con formato correcto
+
+**Impacto:** un ISBN con 10/13 dígitos bien formados pero con el dígito de control incorrecto
+(typo, generado al azar) se acepta como si fuera un identificador bibliográfico real.
+**Mitigación:** checksum matemático real (mod-11/mod-10) vía Native SQL en `CreateBookDetails`
+— ver `docs/catalog.md#isbn`. Probado: ISBN10 e ISBN13 con checksum inválido → rechazados (0
+filas, sin excepción); con checksum válido (incluyendo el caso especial del dígito `X` en
+ISBN10) → aceptados.
+
+## 18. `BookDetails` en un Product que no es un libro
+
+**Impacto:** adjuntar ficha bibliográfica (ISBN, autores, editorial) a un producto que no es un
+libro (un mouse, un cuaderno), generando datos sin sentido de negocio y posible confusión en
+búsquedas/reportes que asuman "todo `BookDetails` implica `productType = BOOK`".
+**Mitigación:** `CreateBookDetails` ahora exige `productType.code == 'BOOK'` del `Product`
+objetivo antes de insertar. Probado: intento sobre un producto `COMPUTER` (mouse) → DENIED.
+
 ## Riesgos pendientes (no bloqueantes para cerrar la fase)
 
 - `AUTH_LOGIN_FAILED`/`SECURITY_ACCESS_DENIED` (sección 24 del prompt) **no** tienen una
@@ -145,3 +206,21 @@ users.create`.
   estrategia (retry con idempotency key + job de reconciliación periódico) pero **no
   implementada**: no existe todavía el job de reconciliación ni el panel administrativo que
   dispararía el flujo completo de alta. Ver `docs/security.md` para el detalle.
+- **[Fase 3 — CERRADO en Fase 3.1]** El checksum de ISBN10/13 (dígito de control) ahora se
+  valida matemáticamente (mod-11 con `X`, mod-10 con pesos 1/3) vía Native SQL, no solo el
+  formato — ver `docs/catalog.md#isbn-formato-cel--checksum-matemático-real-native-sql--endurecido-en-fase-31`.
+- **[Fase 3.1]** No existe un tope de profundidad real para el árbol de `Category` al crear
+  (`CreateCategory`): solo hay prevención de CICLOS (acotada a 3 ancestros) al reparentar. Una
+  cadena lineal sin ciclo puede crecer indefinidamente. Ver "Profundidad de categorías" en
+  `docs/catalog.md`. No es una amenaza de seguridad (no hay dato expuesto ni autorización
+  evadida), es un límite de negocio/UX pendiente de confirmación de producto.
+- **[Fase 3.1]** `ProductImage.isPrimary` no es mutuamente excluyente (se pueden crear varias
+  imágenes primarias para el mismo producto) — decisión consciente documentada en
+  `docs/catalog.md`, no un bug; requeriría un índice `UNIQUE` parcial si el negocio confirma que
+  debe forzarse a una sola.
+- **[Fase 3]** `ipAddress`/`userAgent`/`correlationId` de `AuditLog` (limitación heredada de
+  Fase 2.1) tampoco se completan para los eventos del catálogo, por la misma razón de
+  plataforma ya documentada.
+- **[Fase 3]** La regla de "no sobrescribir cambios manuales" ante una sincronización externa
+  futura (sección 58 del prompt) está documentada (`docs/catalog.md`) pero no implementada:
+  no hay todavía ningún proveedor externo conectado.
