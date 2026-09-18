@@ -1,0 +1,396 @@
+# Fase 4 — Inventory & Stock Core: mutations.
+#
+# PATRON DE CONCURRENCIA (seccion 9, "CRITICO" — ver docs/inventory.md#concurrencia para el
+# detalle completo de como se verifico empiricamente antes de escribir este archivo):
+#
+# 1. El cambio real de `Inventory.quantity` SIEMPRE se hace con una sentencia UPDATE nativa
+#    PLANA (sin WITH), con la condicion de suficiencia de stock en el propio WHERE
+#    (`... AND quantity >= $qty`). Bajo PostgreSQL, dos UPDATE concurrentes sobre la MISMA fila
+#    se serializan por el lock de fila: el segundo en llegar re-evalua su WHERE contra el valor
+#    YA actualizado por el primero. Verificado empiricamente disparando 2 mutations en paralelo
+#    real (Promise.allSettled) contra el mismo registro: exactamente una tuvo efecto, nunca
+#    ambas, nunca lost update, nunca stock negativo — 5 corridas consecutivas, mismo resultado.
+# 2. Si el WHERE no matchea ninguna fila (stock insuficiente o inventario inexistente), el
+#    campo Native SQL devuelve `null` (0 filas), SIN lanzar excepcion — mismo patron ya usado
+#    para el checksum de ISBN en Fase 3.1.
+# 3. HALLAZGO DE PLATAFORMA (nuevo en esta fase): dentro de UNA misma mutation, un campo Native
+#    SQL NO ve los cambios que otro campo (anterior en el mismo mutation) ya escribio — cada
+#    campo parece evaluarse contra el snapshot de ANTES de que la mutation empezara a escribir,
+#    aunque @transaction sigue revirtiendo TODOS los campos si CUALQUIERA falla con una
+#    excepcion real. Verificado con xmin/pg_current_xact_id(): un SELECT en el campo B no ve el
+#    UPDATE del campo A de la MISMA mutation. Consecuencia: NO es posible condicionar el INSERT
+#    de InventoryMovement/AuditLog al resultado real del UPDATE atomico dentro de la misma
+#    mutation. Ver "LIMITE ACEPTADO" en cada mutation de abajo para como se documenta esto.
+# 4. TRANSFERENCIAS: ambas piernas (origen -qty, destino +qty) se resuelven en UNA sola
+#    sentencia UPDATE (2 filas), usando una SUBCONSULTA NO correlacionada como "compuerta"
+#    conjunta (`(SELECT quantity FROM inventory WHERE ...) >= $qty` aplicado a AMBAS filas via
+#    WHERE), no un WITH. Verificado empiricamente: si origen no tiene stock suficiente, NINGUNA
+#    de las 2 filas cambia (atomicidad real de 2 filas en 1 statement).
+# 5. IDEMPOTENCIA: `idempotencyKey` es UNIQUE real de columna en InventoryMovement. Un reintento
+#    con la MISMA key hace fallar el INSERT del movimiento -> @transaction revierte TODO,
+#    incluyendo el UPDATE de stock que esa misma mutation ya habia aplicado en este intento. El
+#    stock nunca queda duplicado por un reintento, sin necesidad de "if exists(...)" en CEL.
+# 6. RENUMERACION DE "$N" (hallazgo de Fase 3.1, sigue aplicando): Data Connect renumera cada
+#    aparicion TEXTUAL de "$N" secuencialmente, sin deduplicar referencias repetidas a la misma
+#    variable GraphQL. Cada "$N" en el SQL de abajo tiene su variable correspondiente repetida
+#    en "params" tantas veces como aparece en el texto, en el mismo orden.
+# 7. HALLAZGO DE PLATAFORMA (columnas de FK compuesta): `InventoryMovement.inventory` referencia
+#    la key COMPUESTA de Inventory (product+branch), asi que Data Connect expande esa relacion
+#    en DOS columnas reales: "inventory_product_id" e "inventory_branch_id" — no existe una
+#    columna "inventory_id" unica. Un INSERT nativo que asuma "inventory_id" falla con un error
+#    de SQL real, pero el emulador reporta ese fallo mezclado con los mensajes de @check de la
+#    misma mutation (mismo tipo de error confuso ya documentado en Fase 3.1), lo que lo hizo
+#    parecer inicialmente un problema de autorizacion. Diagnosticado aislando cada campo de la
+#    mutation en mutations de depuracion sucesivas hasta encontrar la columna real en el DDL
+#    generado (`dataconnect-debug.log`).
+
+# ---------- InitializeInventory (inventory.adjust) ----------
+# Crea el inventario de un producto en una sucursal si no existe. Sin Native SQL necesario:
+# (productId, branchId) es la PK compuesta de la tabla (Fase 4 schema), asi que un duplicado es
+# rechazado por PostgreSQL, no por logica de aplicacion.
+
+mutation InitializeInventory(
+  $productId: UUID!
+  $branchId: UUID!
+  $minimumStock: Float
+  $maximumStock: Float
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.adjust')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.minimumStock) || vars.minimumStock == null || vars.minimumStock >= 0.0) && (!has(vars.maximumStock) || vars.maximumStock == null || vars.maximumStock >= 0.0) && ((!has(vars.maximumStock) || vars.maximumStock == null) || (!has(vars.minimumStock) || vars.minimumStock == null) || vars.maximumStock >= vars.minimumStock)"
+      message: "Requiere permiso inventory.adjust, acceso a la sucursal, o minimumStock/maximumStock invalido"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+  }
+  inventory_insert(data: { productId: $productId, branchId: $branchId, quantity: 0, reservedQuantity: 0, minimumStock: $minimumStock, maximumStock: $maximumStock })
+  auditLog_insert(data: { action: "INVENTORY_INITIALIZED", entityType: "Inventory", entityId: $productId, branchId: $branchId })
+}
+
+# ---------- CreateInventoryAdjustment (inventory.adjust) ----------
+# LIMITE ACEPTADO Y DOCUMENTADO (ver cabecera del archivo, punto 3): si el UPDATE atomico
+# rechaza el ajuste (stock insuficiente detectado en el instante exacto de escritura, tras
+# pasar el @check), el AuditLog/InventoryMovement igual se registran, con quantityAfter
+# "mejor esfuerzo" (leido en vivo, puede no reflejar la interseccion exacta bajo una carrera
+# genuina entre 2 mutations distintas). El STOCK REAL (Inventory.quantity) nunca se corrompe
+# en ese caso: el UPDATE guardado simplemente no lo modifica. Mismo tipo de limitacion ya
+# aceptada en Fase 3.1 para CreateBookDetails (auditoria optimista, nunca stock/dato incorrecto).
+
+mutation CreateInventoryAdjustment(
+  $productId: UUID!
+  $branchId: UUID!
+  $quantity: Float!
+  $direction: String!
+  $reason: String
+  $notes: String
+  $idempotencyKey: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.adjust')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && vars.quantity > 0.0 && vars.direction in ['IN', 'OUT']"
+      message: "Requiere permiso inventory.adjust, acceso a la sucursal, cantidad debe ser > 0, o direction invalido (IN/OUT)"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetInventory: inventories(where: { productId: { eq: $productId }, branchId: { eq: $branchId } }) @check(
+      expr: "this.size() > 0 && (vars.direction == 'IN' || this[0].quantity >= vars.quantity)"
+      message: "Inventario no inicializado para este producto/sucursal, o stock insuficiente para el ajuste de salida"
+    ) {
+      quantity
+    }
+  }
+  stockUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."inventory"
+      SET quantity = CASE WHEN $1 = 'IN' THEN quantity + $2 ELSE quantity - $3 END,
+          last_movement_at = now(), updated_at = now(), updated_by = $4
+      WHERE product_id = $5 AND branch_id = $6
+        AND ($7 = 'IN' OR quantity >= $8)
+      RETURNING id, quantity AS quantity_after
+    """
+    params: [$direction, $quantity, $quantity, { _expr: "auth.uid" }, $productId, $branchId, $direction, $quantity]
+  )
+  movement: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."inventory_movement"
+        ("id", "inventory_product_id", "inventory_branch_id", "product_id", "branch_id", "movement_type", "quantity", "quantity_before", "quantity_after", "reason", "notes", "idempotency_key", "occurred_at", "created_at", "created_by")
+      SELECT uuid_generate_v4(), i.product_id, i.branch_id, i.product_id, i.branch_id,
+        CASE WHEN $1 = 'IN' THEN 'ADJUSTMENT_IN' ELSE 'ADJUSTMENT_OUT' END,
+        $2, i.quantity,
+        CASE WHEN $3 = 'IN' THEN i.quantity + $4 ELSE i.quantity - $5 END,
+        $6, $7, $8, now(), now(), $9
+      FROM "public"."inventory" i
+      WHERE i.product_id = $10 AND i.branch_id = $11
+      RETURNING id
+    """
+    params: [$direction, $quantity, $direction, $quantity, $quantity, $reason, $notes, $idempotencyKey, { _expr: "auth.uid" }, $productId, $branchId]
+  )
+  auditLog_insert(data: { action: "INVENTORY_ADJUSTED", entityType: "Inventory", entityId: $productId, branchId: $branchId })
+}
+
+# ---------- ReceiveInventory (inventory.receive) ----------
+# Recepcion fisica de mercancia (sin Purchase Order todavia, seccion 8). Bloqueada solo para
+# productos DISCONTINUED (seccion 24: no tiene sentido comercial comprar mas de algo
+# descontinuado permanentemente); INACTIVE SI puede recibir (puede ser una pausa temporal con
+# una orden de compra ya en camino) — decision documentada en docs/inventory.md.
+# Costo promedio ponderado (seccion 12): calculado en la MISMA sentencia UPDATE, leyendo
+# quantity/average_cost ANTES de esta escritura (valores "old" estandar de SQL dentro de un
+# UPDATE). Si oldQty = 0, newAverageCost = receivedUnitCost (sin division por cero).
+
+mutation ReceiveInventory(
+  $productId: UUID!
+  $branchId: UUID!
+  $quantity: Float!
+  $unitCost: Float!
+  $referenceType: String
+  $referenceId: UUID
+  $notes: String
+  $idempotencyKey: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.receive')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && vars.quantity > 0.0 && vars.unitCost >= 0.0 && vars.unitCost <= 999999.99"
+      message: "Requiere permiso inventory.receive, acceso a la sucursal, cantidad > 0, o unitCost invalido (0 <= unitCost <= 999999.99)"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetProduct: products(where: { id: { eq: $productId } }) @check(
+      expr: "this.size() > 0 && this[0].status != 'DISCONTINUED'"
+      message: "Producto inexistente o DISCONTINUED (no puede recibir mercancia nueva)"
+    ) {
+      status
+    }
+    targetInventory: inventories(where: { productId: { eq: $productId }, branchId: { eq: $branchId } }) @check(
+      expr: "this.size() > 0"
+      message: "Inventario no inicializado para este producto/sucursal (usar InitializeInventory primero)"
+    ) {
+      quantity
+    }
+  }
+  stockUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."inventory"
+      SET average_cost = CASE WHEN quantity = 0 THEN $1 ELSE (quantity * COALESCE(average_cost, 0) + $2 * $3) / (quantity + $4) END,
+          quantity = quantity + $5,
+          last_movement_at = now(), updated_at = now(), updated_by = $6
+      WHERE product_id = $7 AND branch_id = $8
+      RETURNING id, quantity AS quantity_after, average_cost AS average_cost_after
+    """
+    params: [$unitCost, $quantity, $unitCost, $quantity, $quantity, { _expr: "auth.uid" }, $productId, $branchId]
+  )
+  movement: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."inventory_movement"
+        ("id", "inventory_product_id", "inventory_branch_id", "product_id", "branch_id", "movement_type", "quantity", "quantity_before", "quantity_after", "unit_cost", "total_cost", "reference_type", "reference_id", "notes", "idempotency_key", "occurred_at", "created_at", "created_by")
+      SELECT uuid_generate_v4(), i.product_id, i.branch_id, i.product_id, i.branch_id, 'PURCHASE_RECEIPT',
+        $1, i.quantity, i.quantity + $2, $3, ($4 * $5), $6, $7, $8, $9, now(), now(), $10
+      FROM "public"."inventory" i
+      WHERE i.product_id = $11 AND i.branch_id = $12
+      RETURNING id
+    """
+    params: [$quantity, $quantity, $unitCost, $quantity, $unitCost, $referenceType, $referenceId, $notes, $idempotencyKey, { _expr: "auth.uid" }, $productId, $branchId]
+  )
+  auditLog_insert(data: { action: "INVENTORY_RECEIVED", entityType: "Inventory", entityId: $productId, branchId: $branchId })
+}
+
+# ---------- ReturnInventoryIn (inventory.return) ----------
+# Entrada por devolucion de cliente. unitCost es OPCIONAL (seccion 12 solo especifica la formula
+# de costo promedio para "cuando entra inventario" en el contexto de recepcion de compra; una
+# devolucion de cliente normalmente no trae un costo nuevo). Si se envia unitCost, se recalcula
+# averageCost con la misma formula que ReceiveInventory; si no, averageCost no se toca —
+# decision documentada en docs/inventory.md.
+
+mutation ReturnInventoryIn(
+  $productId: UUID!
+  $branchId: UUID!
+  $quantity: Float!
+  $unitCost: Float
+  $referenceType: String
+  $referenceId: UUID
+  $notes: String
+  $idempotencyKey: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.return')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && vars.quantity > 0.0 && (!has(vars.unitCost) || vars.unitCost == null || (vars.unitCost >= 0.0 && vars.unitCost <= 999999.99))"
+      message: "Requiere permiso inventory.return, acceso a la sucursal, cantidad > 0, o unitCost invalido"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetInventory: inventories(where: { productId: { eq: $productId }, branchId: { eq: $branchId } }) @check(
+      expr: "this.size() > 0"
+      message: "Inventario no inicializado para este producto/sucursal (usar InitializeInventory primero)"
+    ) {
+      quantity
+    }
+  }
+  stockUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."inventory"
+      SET average_cost = CASE WHEN $1 IS NULL THEN average_cost WHEN quantity = 0 THEN $2 ELSE (quantity * COALESCE(average_cost, 0) + $3 * $4) / (quantity + $5) END,
+          quantity = quantity + $6,
+          last_movement_at = now(), updated_at = now(), updated_by = $7
+      WHERE product_id = $8 AND branch_id = $9
+      RETURNING id, quantity AS quantity_after
+    """
+    params: [$unitCost, $unitCost, $unitCost, $quantity, $quantity, $quantity, { _expr: "auth.uid" }, $productId, $branchId]
+  )
+  movement: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."inventory_movement"
+        ("id", "inventory_product_id", "inventory_branch_id", "product_id", "branch_id", "movement_type", "quantity", "quantity_before", "quantity_after", "unit_cost", "reference_type", "reference_id", "notes", "idempotency_key", "occurred_at", "created_at", "created_by")
+      SELECT uuid_generate_v4(), i.product_id, i.branch_id, i.product_id, i.branch_id, 'RETURN_IN',
+        $1, i.quantity, i.quantity + $2, $3, $4, $5, $6, $7, now(), now(), $8
+      FROM "public"."inventory" i
+      WHERE i.product_id = $9 AND i.branch_id = $10
+      RETURNING id
+    """
+    params: [$quantity, $quantity, $unitCost, $referenceType, $referenceId, $notes, $idempotencyKey, { _expr: "auth.uid" }, $productId, $branchId]
+  )
+  auditLog_insert(data: { action: "INVENTORY_RETURNED", entityType: "Inventory", entityId: $productId, branchId: $branchId })
+}
+
+# ---------- ReturnInventoryOut (inventory.return) ----------
+# Salida por devolucion al proveedor u operacion equivalente. Debe impedir stock negativo
+# (mismo patron de UPDATE guardado por WHERE que CreateInventoryAdjustment OUT).
+
+mutation ReturnInventoryOut(
+  $productId: UUID!
+  $branchId: UUID!
+  $quantity: Float!
+  $referenceType: String
+  $referenceId: UUID
+  $notes: String
+  $idempotencyKey: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.return')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && vars.quantity > 0.0"
+      message: "Requiere permiso inventory.return, acceso a la sucursal, o cantidad debe ser > 0"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetInventory: inventories(where: { productId: { eq: $productId }, branchId: { eq: $branchId } }) @check(
+      expr: "this.size() > 0 && this[0].quantity >= vars.quantity"
+      message: "Inventario no inicializado, o stock insuficiente para la devolucion de salida"
+    ) {
+      quantity
+    }
+  }
+  stockUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."inventory"
+      SET quantity = quantity - $1, last_movement_at = now(), updated_at = now(), updated_by = $2
+      WHERE product_id = $3 AND branch_id = $4 AND quantity >= $5
+      RETURNING id, quantity AS quantity_after
+    """
+    params: [$quantity, { _expr: "auth.uid" }, $productId, $branchId, $quantity]
+  )
+  movement: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."inventory_movement"
+        ("id", "inventory_product_id", "inventory_branch_id", "product_id", "branch_id", "movement_type", "quantity", "quantity_before", "quantity_after", "reference_type", "reference_id", "notes", "idempotency_key", "occurred_at", "created_at", "created_by")
+      SELECT uuid_generate_v4(), i.product_id, i.branch_id, i.product_id, i.branch_id, 'RETURN_OUT',
+        $1, i.quantity, i.quantity - $2, $3, $4, $5, $6, now(), now(), $7
+      FROM "public"."inventory" i
+      WHERE i.product_id = $8 AND i.branch_id = $9
+      RETURNING id
+    """
+    params: [$quantity, $quantity, $referenceType, $referenceId, $notes, $idempotencyKey, { _expr: "auth.uid" }, $productId, $branchId]
+  )
+  auditLog_insert(data: { action: "INVENTORY_RETURNED", entityType: "Inventory", entityId: $productId, branchId: $branchId })
+}
+
+# ---------- TransferInventory (inventory.transfer) ----------
+# Operacion logica unica entre 2 sucursales (seccion 8/21): atomicidad real de 2 filas en UNA
+# sola sentencia UPDATE (ver cabecera del archivo, punto 4) — si origen no tiene stock
+# suficiente, NINGUNA de las 2 filas cambia. Autorizacion requerida sobre AMBAS sucursales
+# (decision de seccion 21, documentada en docs/inventory.md): mover stock hacia/desde una
+# sucursal a la que el usuario no tiene acceso queda denegado en cualquier direccion.
+# Costo promedio de destino: NO se recalcula en esta fase (simplificacion documentada, YAGNI —
+# ver docs/inventory.md); el destino conserva su propio averageCost sin absorber el del origen.
+# Genera 2 filas de InventoryMovement (TRANSFER_OUT + TRANSFER_IN) con la MISMA operacion pero
+# idempotencyKey sufijado (":OUT"/":IN") porque la columna es UNIQUE global — ver docs/inventory.md.
+# Precondicion: el inventario de DESTINO debe existir ya (InitializeInventory primero) — no se
+# auto-crea dentro de la transferencia, decision minima documentada (evita logica de
+# "crear-o-actualizar" adicional dentro de la sentencia atomica de 2 filas).
+
+mutation TransferInventory(
+  $productId: UUID!
+  $sourceBranchId: UUID!
+  $destinationBranchId: UUID!
+  $quantity: Float!
+  $notes: String
+  $idempotencyKey: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.transfer')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.sourceBranchId) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.destinationBranchId) && vars.quantity > 0.0 && vars.sourceBranchId != vars.destinationBranchId"
+      message: "Requiere permiso inventory.transfer, acceso a AMBAS sucursales, cantidad > 0, o origen == destino"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    sourceInv: inventories(where: { productId: { eq: $productId }, branchId: { eq: $sourceBranchId } }) @check(
+      expr: "this.size() > 0 && this[0].quantity >= vars.quantity"
+      message: "Inventario origen no existe o stock insuficiente"
+    ) {
+      quantity
+    }
+    destInv: inventories(where: { productId: { eq: $productId }, branchId: { eq: $destinationBranchId } }) @check(
+      expr: "this.size() > 0"
+      message: "Inventario destino no inicializado (usar InitializeInventory primero)"
+    ) {
+      quantity
+    }
+  }
+  stockUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."inventory"
+      SET quantity = CASE WHEN branch_id = $1 THEN quantity - $2 ELSE quantity + $3 END,
+          last_movement_at = now(), updated_at = now()
+      WHERE product_id = $4 AND branch_id IN ($5, $6)
+        AND (SELECT quantity FROM "public"."inventory" WHERE product_id = $7 AND branch_id = $8) >= $9
+      RETURNING branch_id
+    """
+    params: [$sourceBranchId, $quantity, $quantity, $productId, $sourceBranchId, $destinationBranchId, $productId, $sourceBranchId, $quantity]
+  )
+  movementOut: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."inventory_movement"
+        ("id", "inventory_product_id", "inventory_branch_id", "product_id", "branch_id", "movement_type", "quantity", "quantity_before", "quantity_after", "reference_type", "reference_id", "notes", "idempotency_key", "occurred_at", "created_at", "created_by")
+      SELECT uuid_generate_v4(), i.product_id, i.branch_id, i.product_id, i.branch_id, 'TRANSFER_OUT',
+        $1, i.quantity, i.quantity - $2, 'TRANSFER', NULL, $3,
+        (CASE WHEN $4 IS NULL THEN NULL ELSE $5 || ':OUT' END), now(), now(), $6
+      FROM "public"."inventory" i
+      WHERE i.product_id = $7 AND i.branch_id = $8
+      RETURNING id
+    """
+    params: [$quantity, $quantity, $notes, $idempotencyKey, $idempotencyKey, { _expr: "auth.uid" }, $productId, $sourceBranchId]
+  )
+  movementIn: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."inventory_movement"
+        ("id", "inventory_product_id", "inventory_branch_id", "product_id", "branch_id", "movement_type", "quantity", "quantity_before", "quantity_after", "reference_type", "reference_id", "notes", "idempotency_key", "occurred_at", "created_at", "created_by")
+      SELECT uuid_generate_v4(), i.product_id, i.branch_id, i.product_id, i.branch_id, 'TRANSFER_IN',
+        $1, i.quantity, i.quantity + $2, 'TRANSFER', NULL, $3,
+        (CASE WHEN $4 IS NULL THEN NULL ELSE $5 || ':IN' END), now(), now(), $6
+      FROM "public"."inventory" i
+      WHERE i.product_id = $7 AND i.branch_id = $8
+      RETURNING id
+    """
+    params: [$quantity, $quantity, $notes, $idempotencyKey, $idempotencyKey, { _expr: "auth.uid" }, $productId, $destinationBranchId]
+  )
+  auditLog_insert(data: { action: "INVENTORY_TRANSFERRED", entityType: "Inventory", entityId: $productId, branchId: $sourceBranchId })
+}

@@ -322,6 +322,43 @@ verificar sus constraints de integridad (FK, duplicados por key compuesta) de pu
 oculto ni convertido en warning para forzar un PASS — el detalle de cada categoría está en
 `docs/catalog.md#resultado-de-pruebas-fase-31-checkpoint`.
 
+### Fase 4 (Inventory & Stock Core) — 73/73
+
+Mismo mecanismo de pruebas, ahora contra `dataconnect/inventory/*.gql` (connector `inventory`).
+Categorías: Setup 2/2, Inventory 8/8, Adjustments 8/8, Receiving 10/10, Returns 3/3, Transfers
+14/14, **Concurrency 3/3**, Branch isolation 4/4, Authorization 8/8, Product status 2/2,
+Kardex 9/9, Audit 2/2.
+
+**Concurrencia (sección crítica de la fase) verificada con paralelismo REAL, no secuencial:**
+dos `CreateInventoryAdjustment` disparados con `Promise.allSettled` (no `await` secuencial)
+contra el mismo `Inventory` (`stock=10`, pidiendo `-7` y `-5` simultáneamente — suma 12 > 10).
+Resultado reproducido en múltiples corridas: exactamente una tuvo efecto, la otra fue
+rechazada, el stock final siempre coincidió exactamente con la ganadora (nunca ambas, nunca
+negativo, nunca lost update). Detalle completo del mecanismo (UPDATE guardado por `WHERE`,
+serialización por row-lock de PostgreSQL) en `docs/inventory.md#concurrencia`.
+
+**Transferencias atómicas de 2 filas** verificadas explícitamente: con stock de origen
+insuficiente, tanto origen como destino quedan sin cambios (nunca "origen descontado, destino
+sin acreditar").
+
+**Idempotencia** verificada con reintento de la misma `idempotencyKey` en `ReceiveInventory` y
+`TransferInventory`: la segunda llamada es rechazada por `UNIQUE`, y el stock final refleja
+solo una aplicación (no depende de un `if exists(...)` vulnerable a carreras).
+
+**Branch isolation extendida a un caso nuevo:** `TransferInventory` exige acceso a AMBAS
+sucursales (origen y destino), no solo una — decisión explícita, ver `docs/inventory.md`.
+
+**Regresión:** Fase 2 (15/15), Fase 2.1 (41/41) y Catálogo F3+F3.1 (63/63) se re-ejecutaron
+completas en la MISMA corrida de emulador que Fase 4, sin reiniciar entre suites — sin cambios
+de comportamiento.
+
+**Total combinado: 15 + 41 + 63 + 73 = 192/192.**
+
+**Hallazgo de plataforma nuevo (aislamiento entre campos de una mutation):** un campo Native
+SQL no ve los cambios que otro campo de la MISMA mutation ya escribió, aunque `@transaction`
+sigue revirtiendo todo ante una excepción real. Documentado en detalle, con la verificación
+empírica exacta (xmin/pg_current_xact_id), en `docs/inventory.md#límite-de-plataforma-aislamiento-entre-campos-de-una-misma-mutation`.
+
 ### Lección de plataforma (Fase 3): variables opcionales omitidas en CEL
 
 Se descubrió, corrigió y verificó un patrón de bug real: cualquier `@check`/`@auth(expr:...)`

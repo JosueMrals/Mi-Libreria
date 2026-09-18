@@ -61,6 +61,28 @@ Firebase Authentication → UserProfile        →     Role → Permission    Br
 Detalle completo del modelo de datos en `docs/database.md`, amenazas analizadas en
 `docs/threat-model.md`.
 
+## Fase 3 / 3.1 — Product Catalog & Data Integrity Hardening
+
+`Product` como entidad comercial universal, global (sin `branchId`), con `BookDetails` para el
+caso bibliográfico. Endurecido en Fase 3.1 con checksum matemático real de ISBN, validación de
+dinero, seeds idempotentes. Detalle completo en `docs/catalog.md`.
+
+## Fase 4 — Inventory & Stock Core
+
+Sobre `Product` (global, Fase 3) se construyó el inventario físico por sucursal:
+
+```
+Product (global) → Inventory (por Branch) → InventoryMovement (kardex append-only)
+```
+
+Objetivo central de la fase: correctness bajo concurrencia (nunca lost update, nunca stock
+negativo, transferencias atómicas de 2 filas, idempotencia real vía `UNIQUE`), priorizada
+explícitamente por encima de performance/conveniencia. Verificado con pruebas de paralelismo
+real (`Promise.allSettled`), no solo secuencial. Reutiliza el mismo modelo de seguridad de Fase
+2 (`auth.uid → UserProfile ACTIVE → roles → permissions → UserBranch`) sin ningún atajo de rol
+en código. Detalle completo del modelo, la estrategia de concurrencia y los hallazgos de
+plataforma en `docs/inventory.md`.
+
 ## Delimitación del alcance
 
 No se crea aún:
@@ -71,4 +93,5 @@ No se crea aún:
 - Tauri
 - ASP.NET Core
 - REST API propia
-- Product/Inventory/Sale/Purchase/Customer/Supplier (Fase 3)
+- Sales/Purchase/Customer completos (ventas y compras — Fase 5/6)
+- FIFO/LIFO, lotes, números de serie, warehouse management avanzado

@@ -86,6 +86,26 @@ constraints UNIQUE. Ver `docs/catalog.md#seeds-idempotentes` para el detalle y e
 plataforma sobre el límite de CTEs encadenados por mutation que motivó dividirlos en mutations
 pequeñas ejecutadas por `dataconnect/seed.sh`.
 
+## Modelo de Inventory & Stock Core (Fase 4)
+
+Definido en `dataconnect/schema/inventory.gql`. Detalle completo (concurrencia, idempotencia,
+costo promedio, transferencias) en `docs/inventory.md`.
+
+```
+Product (GLOBAL, Fase 3)
+   └── Inventory (por Branch, PK compuesta product+branch, UNIQUE real)
+          └── InventoryMovement (kardex, append-only, FK compuesta hacia Inventory)
+```
+
+| Tabla | Campos clave | Notas |
+|---|---|---|
+| `Inventory` | PK compuesta (`product`,`branch`), `quantity`/`reservedQuantity`/`minimumStock`/`maximumStock` (`numeric(14,3)`), `averageCost` (`numeric(12,2)`) | Fuente de verdad del stock; nunca editable por mutation genérica. |
+| `InventoryMovement` | `id` (PK), FK compuesta a `Inventory` (`inventory_product_id`+`inventory_branch_id`, `@ref(constraintName:)` explícito por el límite de 63 bytes), `movementType` (dominio cerrado de 8 valores), `idempotencyKey` (`UNIQUE`, nullable) | Append-only: sin mutation `_update`/`_delete` publicada. |
+
+`InventoryMovement.inventory` es el segundo caso en el proyecto (tras
+`ProductVariantOptionValue`, Fase 3) donde el nombre de constraint FK auto-generado excede el
+límite de Postgres por apuntar a una key compuesta — mismo `@ref(constraintName:)` explícito.
+
 ## Reglas futuras
 
 - Usar `NUMERIC/DECIMAL` para dinero (Fase 1, sección 17): aplicado en `ProductPrice.amount` y

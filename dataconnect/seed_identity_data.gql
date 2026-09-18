@@ -83,6 +83,11 @@ mutation SeedPermission4 @transaction {
   permission_up149: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000049", name: "book_metadata.read" })
   permission_up150: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000050", name: "book_metadata.create" })
   permission_up151: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000051", name: "book_metadata.update" })
+  # Fase 4 — Inventory & Stock Core (seccion 15). inventory.read/inventory.adjust ya existian
+  # como placeholders de Fase 2.
+  permission_up152: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000052", name: "inventory.receive" })
+  permission_up153: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000053", name: "inventory.return" })
+  permission_up154: permission_upsert(data: { id: "20000000-0000-0000-0000-000000000054", name: "inventory.transfer" })
 }
 
 
@@ -344,6 +349,20 @@ mutation SeedRolePermission11 @transaction {
 mutation SeedRolePermission12 @transaction {
   rolePermission_up466: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000047" })
   rolePermission_up467: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000007", permissionId: "20000000-0000-0000-0000-000000000049" })
+  # Fase 4: inventory.receive/return/transfer -> SUPER_ADMIN, ADMIN, MANAGER, INVENTORY (los
+  # mismos 4 roles que ya tenian inventory.read/inventory.adjust desde Fase 2).
+  rolePermission_up468: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000052" })
+  rolePermission_up469: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000053" })
+  rolePermission_up470: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000001", permissionId: "20000000-0000-0000-0000-000000000054" })
+  rolePermission_up471: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000052" })
+  rolePermission_up472: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000053" })
+  rolePermission_up473: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000002", permissionId: "20000000-0000-0000-0000-000000000054" })
+  rolePermission_up474: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000052" })
+  rolePermission_up475: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000053" })
+  rolePermission_up476: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000003", permissionId: "20000000-0000-0000-0000-000000000054" })
+  rolePermission_up477: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000052" })
+  rolePermission_up478: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000053" })
+  rolePermission_up479: rolePermission_upsert(data: { roleId: "10000000-0000-0000-0000-000000000005", permissionId: "20000000-0000-0000-0000-000000000054" })
 }
 
 

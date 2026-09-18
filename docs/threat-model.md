@@ -187,6 +187,49 @@ búsquedas/reportes que asuman "todo `BookDetails` implica `productType = BOOK`"
 **Mitigación:** `CreateBookDetails` ahora exige `productType.code == 'BOOK'` del `Product`
 objetivo antes de insertar. Probado: intento sobre un producto `COMPUTER` (mouse) → DENIED.
 
+## Amenazas de Inventory & Stock Core (Fase 4)
+
+## 19. Lost update / stock negativo bajo concurrencia
+
+**Impacto:** dos operaciones concurrentes de salida de stock (ventas/ajustes simultáneos) que
+ambas leen el mismo stock inicial y escriben sin considerar la otra, dejando el stock en un
+valor incorrecto (positivo cuando debería ser negativo-y-rechazado, o viceversa perdiendo una
+de las dos operaciones).
+**Mitigación:** todo cambio de `quantity` usa una sentencia `UPDATE` atómica con la condición de
+suficiencia en el propio `WHERE` (`quantity >= $qty`), aprovechando el row-locking real de
+PostgreSQL para serializar automáticamente escrituras concurrentes sobre la misma fila. Probado
+con paralelismo real (no secuencial): exactamente una de dos operaciones concurrentes
+conflictivas tiene efecto, nunca ambas, nunca stock negativo. Detalle en `docs/inventory.md`.
+
+## 20. Transferencia parcial (origen descontado, destino no acreditado)
+
+**Impacto:** una transferencia que falla a mitad de camino deja el stock "perdido" — descontado
+del origen pero nunca acreditado al destino.
+**Mitigación:** ambas piernas de una transferencia se resuelven en UNA sola sentencia `UPDATE`
+que afecta las 2 filas simultáneamente, con una subconsulta no correlacionada como compuerta
+conjunta: si el origen no tiene stock suficiente, NINGUNA de las 2 filas cambia. Probado: con
+stock insuficiente, origen y destino quedan exactamente sin cambios.
+
+## 21. Doble procesamiento por reintento de red (falta de idempotencia)
+
+**Impacto:** un cliente (mobile/desktop, con conectividad intermitente) reintenta una operación
+de inventario tras un timeout, sin saber si la primera llamada tuvo efecto, duplicando el
+movimiento de stock.
+**Mitigación:** `idempotencyKey` es `UNIQUE` real de columna en `InventoryMovement`; un
+reintento con la misma key hace fallar el `INSERT` del movimiento, y `@transaction` revierte
+TODA la mutation incluyendo el cambio de stock ya aplicado en ese intento. Probado: reintento de
+`ReceiveInventory`/`TransferInventory` con la misma key → rechazado, stock final refleja una
+sola aplicación.
+
+## 22. Recibir mercancía de un producto descontinuado
+
+**Impacto:** registrar una recepción de compra para un producto marcado `DISCONTINUED`,
+inflando stock de algo que el negocio ya decidió dejar de vender/comprar.
+**Mitigación:** `ReceiveInventory` exige `productType.status != 'DISCONTINUED'` en su `@check`.
+Ajustes/devoluciones/transferencias permanecen permitidos independientemente del estado
+(corregir un conteo físico existente debe funcionar siempre) — decisión explícita, ver
+`docs/inventory.md`.
+
 ## Riesgos pendientes (no bloqueantes para cerrar la fase)
 
 - `AUTH_LOGIN_FAILED`/`SECURITY_ACCESS_DENIED` (sección 24 del prompt) **no** tienen una
@@ -218,6 +261,18 @@ objetivo antes de insertar. Probado: intento sobre un producto `COMPUTER` (mouse
   imágenes primarias para el mismo producto) — decisión consciente documentada en
   `docs/catalog.md`, no un bug; requeriría un índice `UNIQUE` parcial si el negocio confirma que
   debe forzarse a una sola.
+- **[Fase 4]** Un campo Native SQL dentro de una mutation no ve los cambios que otro campo de la
+  MISMA mutation ya escribió (verificado con xmin/pg_current_xact_id) — impide condicionar el
+  `InventoryMovement`/`AuditLog` al resultado real del `UPDATE` atómico de stock. En el residuo
+  acotado de una carrera genuina entre 2 mutations distintas, un movimiento puede registrarse
+  con `quantityAfter` "mejor esfuerzo" aunque el guard haya rechazado el cambio real de stock
+  (que en sí mismo permanece siempre correcto). Ver `docs/inventory.md` para el detalle completo
+  y por qué no se intentó resolver con un `WITH` (rompe el emulador, ya documentado en Fase 3.1).
+- **[Fase 4]** Costo promedio de destino en `TransferInventory` no se propaga desde el origen —
+  simplificación documentada (YAGNI), no bug.
+- **[Fase 4]** Agregación de inventario "todas mis sucursales en una sola query" no implementada
+  — cada query de kardex/listado exige `$branchId` explícito; un usuario multi-sucursal llama
+  una vez por sucursal. Pendiente de un patrón `where` server-side verificado.
 - **[Fase 3]** `ipAddress`/`userAgent`/`correlationId` de `AuditLog` (limitación heredada de
   Fase 2.1) tampoco se completan para los eventos del catálogo, por la misma razón de
   plataforma ya documentada.

@@ -1,0 +1,208 @@
+# Fase 4 — Inventory & Stock Core: queries (kardex, seccion 17).
+#
+# Todas requieren `inventory.read` y estan acotadas a UNA sucursal ($branchId obligatorio),
+# verificada contra UserBranch (branch isolation, seccion 14) exactamente igual que las
+# mutations. DECISION DOCUMENTADA (YAGNI, ver docs/inventory.md#queries): no se implementa
+# agregacion "todas mis sucursales en una sola llamada" en esta fase — un usuario con acceso a
+# varias sucursales llama la query una vez por sucursal. Una capa de reportes/dashboard futura
+# puede agregar client-side o con una query dedicada si se necesita.
+#
+# Todas tienen limit+offset con tope maximo 200 (mismo patron de Fase 3), usando el patron
+# seguro `!has(vars.X) || vars.X == null || ...` para variables opcionales (Fase 3.1).
+
+query GetInventory($productId: UUID!, $branchId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId)"
+    message: "Requiere permiso inventory.read y acceso a la sucursal"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  inventories(where: { productId: { eq: $productId }, branchId: { eq: $branchId } }) {
+    id
+    quantity
+    reservedQuantity
+    minimumStock
+    maximumStock
+    averageCost
+    lastMovementAt
+    updatedAt
+    product { id name sku }
+    branch { id name code }
+  }
+}
+
+query GetInventoryByBranch($branchId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso inventory.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  inventories(where: { branchId: { eq: $branchId } }, limit: $limit, offset: $offset, orderBy: { updatedAt: DESC }) {
+    id
+    quantity
+    reservedQuantity
+    minimumStock
+    maximumStock
+    averageCost
+    product { id name sku status }
+  }
+}
+
+query GetInventoryByProduct($productId: UUID!, $branchId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId)"
+    message: "Requiere permiso inventory.read y acceso a la sucursal"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  inventories(where: { productId: { eq: $productId }, branchId: { eq: $branchId } }) {
+    id
+    quantity
+    reservedQuantity
+    averageCost
+    branch { id name code }
+  }
+}
+
+query ListInventory($branchId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso inventory.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  inventories(where: { branchId: { eq: $branchId } }, limit: $limit, offset: $offset) {
+    id
+    quantity
+    reservedQuantity
+    minimumStock
+    maximumStock
+    averageCost
+    lastMovementAt
+    product { id name sku status }
+  }
+}
+
+query ListInventoryMovements(
+  $branchId: UUID!
+  $productId: UUID
+  $movementType: String
+  $limit: Int = 50
+  $offset: Int = 0
+) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso inventory.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  inventoryMovements(
+    where: {
+      branchId: { eq: $branchId }
+      productId: { eq: $productId }
+      movementType: { eq: $movementType }
+    }
+    limit: $limit
+    offset: $offset
+    orderBy: { occurredAt: DESC }
+  ) {
+    id
+    movementType
+    quantity
+    quantityBefore
+    quantityAfter
+    unitCost
+    totalCost
+    referenceType
+    referenceId
+    reason
+    notes
+    idempotencyKey
+    occurredAt
+    createdBy
+    product { id name sku }
+  }
+}
+
+query GetProductKardex($productId: UUID!, $branchId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso inventory.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  inventoryMovements(
+    where: { productId: { eq: $productId }, branchId: { eq: $branchId } }
+    limit: $limit
+    offset: $offset
+    orderBy: { occurredAt: DESC }
+  ) {
+    id
+    movementType
+    quantity
+    quantityBefore
+    quantityAfter
+    unitCost
+    totalCost
+    reason
+    notes
+    idempotencyKey
+    occurredAt
+  }
+}
+
+# quantity <= minimumStock es una comparacion COLUMNA-CONTRA-COLUMNA que el DSL declarativo de
+# "where" no puede expresar (solo columna-contra-literal/variable) — de ahi el uso de Native
+# SQL de solo lectura (_select), permitido fuera de @check, combinado con @auth/@check a nivel
+# de operacion (igual que las mutations de este archivo).
+query GetLowStockProducts($branchId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso inventory.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  items: _select(
+    sql: """
+      SELECT i.id AS id, i.quantity AS quantity, i.minimum_stock AS minimum_stock,
+             p.id AS product_id, p.name AS product_name, p.sku AS sku
+      FROM "public"."inventory" i
+      JOIN "public"."product" p ON p.id = i.product_id
+      WHERE i.branch_id = $1 AND i.minimum_stock IS NOT NULL AND i.quantity <= i.minimum_stock
+      ORDER BY i.quantity ASC
+      LIMIT $2 OFFSET $3
+    """
+    params: [$branchId, $limit, $offset]
+  )
+}
+
+query GetOutOfStockProducts($branchId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'inventory.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso inventory.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  inventories(where: { branchId: { eq: $branchId }, quantity: { eq: 0 } }, limit: $limit, offset: $offset) {
+    id
+    quantity
+    product { id name sku }
+  }
+}

@@ -1,0 +1,97 @@
+# Fase 4 — Inventory & Stock Core.
+#
+# Principio (sección 2 del prompt): Product sigue siendo GLOBAL (Fase 3). El inventario es
+# donde ese Product se vuelve físico, por sucursal:
+#
+#   Product (global) → Inventory (por Branch) → InventoryMovement (kardex, append-only)
+#
+# No se crean entidades comerciales alternativas por tipo de producto (BranchProduct,
+# BookInventory, etc.) — un único par de tablas sirve para todo el catálogo.
+#
+# Unidad de medida: Inventory NO tiene su propio campo de UnitOfMeasure — reutiliza siempre la
+# unidad base ya definida en Product.unitOfMeasure (Fase 3). Si existe UnitConversion (ej. 1 BOX
+# = 12 UNIT), `Inventory.quantity` se almacena SIEMPRE en la unidad base del producto, nunca en
+# la unidad de compra/empaque — las conversiones de empaque son responsabilidad del cliente al
+# construir la mutation, no de esta fase (sección 20: "no implementar todavía conversiones
+# complejas de inventario si no son necesarias").
+#
+# quantity como NUMERIC, no Int: UnitOfMeasure.allowsDecimals (Fase 3) ya anticipaba productos
+# vendidos por peso/volumen fraccionario. numeric(14,3) dan 3 decimales (soporta kg/L) sin
+# rediseño futuro; para productos de unidad entera simplemente se almacenan como "10.000".
+
+type Inventory @table(key: ["product", "branch"]) {
+  id: UUID! @default(expr: "uuidV4()")
+  product: Product!
+  branch: Branch!
+  # Fuente de verdad del stock actual (sección 7). Nunca se escribe directamente por el
+  # cliente: solo mutations explícitas de inventario la modifican (ver mutations.gql).
+  quantity: Float! @col(dataType: "numeric(14,3)")
+  reservedQuantity: Float! @col(dataType: "numeric(14,3)")
+  # Nullable: no todo producto/sucursal define umbrales de reorden todavía.
+  minimumStock: Float @col(dataType: "numeric(14,3)")
+  maximumStock: Float @col(dataType: "numeric(14,3)")
+  # Costo promedio ponderado (sección 12) — nunca FIFO/LIFO en esta fase. Mismo patrón de
+  # dinero exacto que ProductPrice (Fase 3.1): Float en GraphQL, numeric(12,2) real en Postgres.
+  averageCost: Float @col(dataType: "numeric(12,2)")
+  lastMovementAt: Timestamp
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+  # Mismo patrón que Product.createdBy/updatedBy (Fase 3): nullable porque @default(expr:
+  # "auth.uid") se evalúa siempre, incluso en contexto admin/seed sin usuario impersonado.
+  createdBy: String @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+  updatedBy: String @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+}
+
+# Kardex: append-only por diseño (sección 6) — nunca se publica una mutation
+# UpdateInventoryMovement/DeleteInventoryMovement. Una corrección se registra como un nuevo
+# movimiento (ej. ADJUSTMENT_OUT + ADJUSTMENT_IN), nunca editando uno existente.
+#
+# movementType: dominio cerrado de 8 valores fijos (sección 5), ligados 1:1 a lógica de negocio
+# (el signo +/- de cada tipo está codificado en cada mutation, no es dato). Sección 5 pregunta
+# si usar "enum-like tables/data-driven domains" — la arquitectura YA establecida en este
+# proyecto para dominios CERRADOS es varchar + whitelist CEL en cada mutation (ver
+# Product.status, ProductPrice.priceType en Fase 3/3.1), reservando las tablas de referencia
+# reales (ProductType, Category, Currency...) para catálogos ABIERTOS que se extienden
+# insertando filas sin tocar código. movementType es cerrado (agregar un 9no tipo requeriría
+# cambiar el signo/lógica en código de todas formas), así que sigue el primer patrón, no el
+# segundo — documentado explícitamente en docs/inventory.md.
+type InventoryMovement @table {
+  id: UUID! @default(expr: "uuidV4()")
+  # constraintName explicito: el auto-generado excede el limite de 63 bytes de Postgres porque
+  # Inventory tiene una key compuesta (product + branch) — mismo problema y misma solucion que
+  # ProductVariantOptionValue en Fase 3.
+  inventory: Inventory! @ref(constraintName: "inv_movement_inventory_fkey")
+  # Denormalizado a propósito (pedido explícitamente en la sección 4 del prompt): permite
+  # consultar el kardex por producto/sucursal sin JOIN contra Inventory.
+  product: Product!
+  branch: Branch!
+  # PURCHASE_RECEIPT | SALE | ADJUSTMENT_IN | ADJUSTMENT_OUT | RETURN_IN | RETURN_OUT |
+  # TRANSFER_IN | TRANSFER_OUT — ver tabla de signos en docs/inventory.md.
+  movementType: String! @col(dataType: "varchar(20)")
+  # Magnitud siempre POSITIVA del movimiento; el signo lo determina movementType, nunca el
+  # valor de quantity (evita un movimiento "ADJUSTMENT_IN" con quantity negativo que invertiría
+  # el efecto real sin que el tipo lo refleje).
+  quantity: Float! @col(dataType: "numeric(14,3)")
+  # "Mejor esfuerzo", no perfectamente atómico bajo concurrencia real entre transacciones
+  # distintas — ver docs/inventory.md#hallazgo-de-plataforma-aislamiento-entre-campos para el
+  # límite de plataforma exacto que motiva esta decisión documentada.
+  quantityBefore: Float @col(dataType: "numeric(14,3)")
+  quantityAfter: Float @col(dataType: "numeric(14,3)")
+  unitCost: Float @col(dataType: "numeric(12,2)")
+  totalCost: Float @col(dataType: "numeric(12,2)")
+  # Prepara Compras/Ventas (Fase 5/6) sin implementarlas: referencia genérica a la operación de
+  # negocio que originó el movimiento (ej. "SALE", UUID de la venta) cuando exista.
+  referenceType: String @col(dataType: "varchar(40)")
+  referenceId: UUID
+  reason: String @col(dataType: "varchar(200)")
+  notes: String
+  occurredAt: Timestamp! @default(expr: "request.time")
+  createdAt: Timestamp! @default(expr: "request.time")
+  createdBy: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+  # Respaldo real de idempotencia (sección 11): UNIQUE de columna, no un "if exists(...)" en
+  # CEL (que puede fallar bajo concurrencia). Nullable: no todas las operaciones necesitan
+  # idempotencyKey (ej. lectura), pero cuando se envía, un reintento con la MISMA key viola este
+  # UNIQUE y aborta toda la transacción — incluyendo el cambio de stock que esa misma mutation
+  # haya intentado aplicar en el mismo intento, gracias a @transaction (ver docs/inventory.md).
+  idempotencyKey: String @unique @col(dataType: "varchar(100)")
+}

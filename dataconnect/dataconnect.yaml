@@ -10,4 +10,4 @@ schemas:
           instanceId: "libreriasystem-fdc"
           # schemaValidation: "STRICT"     # STRICT mode makes Postgres schema match Data Connect exactly.
           # schemaValidation: "COMPATIBLE" # COMPATIBLE mode makes Postgres schema compatible with Data Connect.
-connectorDirs: ["./example", "./identity", "./catalog"]
+connectorDirs: ["./example", "./identity", "./catalog", "./inventory"]

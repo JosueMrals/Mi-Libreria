@@ -1,0 +1,16 @@
+# Fase 4 — Inventory & Stock Core: seed.
+#
+# DECISION (seccion 26, "si se necesitan datos de inventario"): este archivo NO siembra filas
+# de Inventory/InventoryMovement. Mismo motivo exacto que Fase 3 documento para no sembrar
+# Product/BookDetails/ProductPrice (ver docs/catalog.md): Inventory.createdBy/updatedBy usan
+# `@default(expr: "auth.uid")`, que Data Connect evalua SIEMPRE, incluso si el cliente intenta
+# pasar un valor explicito — y falla si no hay un usuario impersonado, que es exactamente el
+# contexto de "firebase dataconnect:execute" (admin puro, sin auth.uid). No hay tampoco
+# catalogo de referencia abierto propio de esta fase (a diferencia de ProductType/Category en
+# Fase 3): Inventory es siempre una fila "producto x sucursal" con actor real.
+#
+# Los datos de inventario para pruebas se crean con las mutations reales
+# (InitializeInventory/ReceiveInventory/...) impersonando un usuario de prueba, exactamente
+# igual que Fase 3 crea sus Product/BookDetails de prueba en run_catalog_tests.js en vez de en
+# el seed. Ver dataconnect/seed.sh para el paso "inventory" (documentativo, sin mutations que
+# ejecutar).

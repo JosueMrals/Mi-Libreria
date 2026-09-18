@@ -17,6 +17,9 @@ La matriz puede modificarse después con `AssignPermissionToRole`/`RemovePermiss
 | sales.cancel | ✔ | ✔ | ✔ | | | | |
 | inventory.read | ✔ | ✔ | ✔ | | ✔ | | |
 | inventory.adjust | ✔ | ✔ | ✔ | | ✔ | | |
+| inventory.receive | ✔ | ✔ | ✔ | | ✔ | | |
+| inventory.return | ✔ | ✔ | ✔ | | ✔ | | |
+| inventory.transfer | ✔ | ✔ | ✔ | | ✔ | | |
 | purchases.read | ✔ | ✔ | ✔ | | ✔ | | |
 | purchases.create | ✔ | ✔ | ✔ | | ✔ | | |
 | purchases.update | ✔ | ✔ | ✔ | | | | |
@@ -111,6 +114,23 @@ denegando incluso el caso más común (cliente usa el default del schema sin pas
 patrón correcto es `!has(vars.limit) || vars.limit == null || ...`. Aplica a cualquier check que
 referencie una variable opcional, no solo a paginación — ver `docs/catalog.md` y
 `docs/security.md`.
+
+## Fase 4: inventory.receive/return/transfer nuevos; inventory.create evaluado y descartado
+
+`inventory.read`/`inventory.adjust` ya existían como placeholders de Fase 2 (mismos 4 roles:
+SUPER_ADMIN, ADMIN, MANAGER, INVENTORY). Se agregaron `inventory.receive`, `inventory.return`,
+`inventory.transfer`, otorgados a los MISMOS 4 roles — ninguna granularidad nueva por rol.
+`TransferInventory` exige `inventory.transfer` **más** acceso `UserBranch` a AMBAS sucursales
+(origen y destino), no solo una — la separación de responsabilidad de negocio (`transfer` vs
+`adjust`/`receive`/`return`) y la separación de scope de sucursal (branch isolation) son
+mecanismos independientes que se combinan, igual que en el resto del proyecto.
+
+**`inventory.create` evaluado explícitamente y NO creado** (sección 15 lo pide evaluar): la
+inicialización de inventario (`InitializeInventory`) reutiliza `inventory.adjust`. Quien puede
+ajustar el stock de un producto/sucursal ya puede, por definición, llevarlo a cualquier valor
+incluyendo el inicial (cero) — un permiso `inventory.create` separado no aportaría separación
+de responsabilidad real, solo granularidad sin caso de uso, violando "no crear permisos
+excesivamente granulares sin necesidad".
 
 ## Fase 3.1: sin permisos nuevos, reutilización confirmada
 
