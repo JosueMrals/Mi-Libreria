@@ -1,0 +1,214 @@
+# Fase 5 — Purchasing & Procurement Core: queries (seccion 28/29).
+#
+# Todas exigen `purchases.read` y estan acotadas a UNA sucursal ($branchId obligatorio),
+# verificada contra UserBranch — mismo patron de branch isolation de Fase 4. Todas tienen
+# limit+offset con tope 200, usando el patron seguro `!has(vars.X) || vars.X == null || ...`
+# para variables opcionales (Fase 3.1/4).
+#
+# CONSOLIDACION (YAGNI): "ListPurchaseOrdersByBranch"/"ListPurchaseReceiptsByBranch" no se
+# implementan como queries separadas de "ListPurchaseOrders"/"ListPurchaseReceipts" — el
+# scope de sucursal ya es un parametro OBLIGATORIO en TODAS las queries de esta fase (branch
+# isolation), asi que serian identicas en los hechos a las generales; serian una duplicacion
+# pura del mismo shape con otro nombre. "ListPurchaseOrdersBySupplier"/"ListPurchaseOrdersByStatus"
+# SI se implementan como queries nombradas separadas (seccion 28 las pide explicitamente).
+
+query GetPurchaseOrder($purchaseOrderId: UUID!, $branchId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId)"
+    message: "Requiere permiso purchases.read y acceso a la sucursal"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  purchaseOrders(where: { id: { eq: $purchaseOrderId }, branchId: { eq: $branchId } }) {
+    id
+    orderNumber
+    status
+    orderedAt
+    expectedAt
+    subtotal
+    taxAmount
+    discountAmount
+    totalAmount
+    notes
+    approvedBy
+    approvedAt
+    createdBy
+    updatedAt
+    supplier { id name status }
+    currency { id code name }
+    branch { id name code }
+  }
+}
+
+query ListPurchaseOrders(
+  $branchId: UUID!
+  $supplierId: UUID
+  $status: String
+  $orderNumber: String
+  $limit: Int = 50
+  $offset: Int = 0
+) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso purchases.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  purchaseOrders(
+    where: { branchId: { eq: $branchId }, supplierId: { eq: $supplierId }, status: { eq: $status }, orderNumber: { eq: $orderNumber } }
+    limit: $limit
+    offset: $offset
+    orderBy: { orderedAt: DESC }
+  ) {
+    id
+    orderNumber
+    status
+    orderedAt
+    expectedAt
+    totalAmount
+    supplier { id name }
+  }
+}
+
+query ListPurchaseOrdersBySupplier($branchId: UUID!, $supplierId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso purchases.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  purchaseOrders(where: { branchId: { eq: $branchId }, supplierId: { eq: $supplierId } }, limit: $limit, offset: $offset, orderBy: { orderedAt: DESC }) {
+    id
+    orderNumber
+    status
+    totalAmount
+  }
+}
+
+query ListPurchaseOrdersByStatus($branchId: UUID!, $status: String!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso purchases.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  purchaseOrders(where: { branchId: { eq: $branchId }, status: { eq: $status } }, limit: $limit, offset: $offset, orderBy: { orderedAt: DESC }) {
+    id
+    orderNumber
+    status
+    totalAmount
+    supplier { id name }
+  }
+}
+
+query GetPurchaseOrderItems($purchaseOrderId: UUID!, $branchId: UUID!, $limit: Int = 100, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso purchases.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  targetOrder: purchaseOrders(where: { id: { eq: $purchaseOrderId }, branchId: { eq: $branchId } }) {
+    id
+  }
+  purchaseOrderItems(where: { purchaseOrderId: { eq: $purchaseOrderId } }, limit: $limit, offset: $offset) {
+    id
+    orderedQuantity
+    receivedQuantity
+    unitCost
+    discountAmount
+    taxAmount
+    totalAmount
+    usesSupplierProduct
+    notes
+    product { id name sku }
+  }
+}
+
+query GetPurchaseReceipt($purchaseReceiptId: UUID!, $branchId: UUID!) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId)"
+    message: "Requiere permiso purchases.read y acceso a la sucursal"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  purchaseReceipts(where: { id: { eq: $purchaseReceiptId }, branchId: { eq: $branchId } }) {
+    id
+    receiptNumber
+    receivedAt
+    notes
+    createdBy
+    purchaseOrder { id orderNumber status }
+    supplier { id name }
+    currency { id code }
+  }
+}
+
+query ListPurchaseReceipts($branchId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso purchases.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  purchaseReceipts(where: { branchId: { eq: $branchId } }, limit: $limit, offset: $offset, orderBy: { receivedAt: DESC }) {
+    id
+    receiptNumber
+    receivedAt
+    purchaseOrder { id orderNumber }
+    supplier { id name }
+  }
+}
+
+query ListPurchaseReceiptsBySupplier($branchId: UUID!, $supplierId: UUID!, $limit: Int = 50, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso purchases.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  purchaseReceipts(where: { branchId: { eq: $branchId }, supplierId: { eq: $supplierId } }, limit: $limit, offset: $offset, orderBy: { receivedAt: DESC }) {
+    id
+    receiptNumber
+    receivedAt
+    purchaseOrder { id orderNumber }
+  }
+}
+
+query GetPurchaseReceiptItems($purchaseReceiptId: UUID!, $branchId: UUID!, $limit: Int = 100, $offset: Int = 0) @auth(level: USER) {
+  userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @redact @check(
+    expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.read')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && (!has(vars.limit) || vars.limit == null || vars.limit <= 200)"
+    message: "Requiere permiso purchases.read, acceso a la sucursal, o limite maximo 200"
+  ) {
+    status
+    roles_via_UserRole { permissions_via_RolePermission { name } }
+    userBranches_on_userProfile { branch { id } }
+  }
+  targetReceipt: purchaseReceipts(where: { id: { eq: $purchaseReceiptId }, branchId: { eq: $branchId } }) {
+    id
+  }
+  purchaseReceiptItems(where: { purchaseReceiptId: { eq: $purchaseReceiptId } }, limit: $limit, offset: $offset) {
+    id
+    receivedQuantity
+    unitCost
+    createdAt
+    product { id name sku }
+    purchaseOrderItem { id orderedQuantity }
+  }
+}

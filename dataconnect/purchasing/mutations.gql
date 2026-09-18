@@ -1,0 +1,400 @@
+# Fase 5 — Purchasing & Procurement Core: mutations.
+#
+# PATRON DE ATOMICIDAD MULTI-ITEM (nuevo hallazgo de plataforma de esta fase, verificado
+# empiricamente antes de escribir este archivo — ver docs/purchasing.md#concurrencia):
+#
+# Data Connect NO permite que una mutation llame a otra (sin composicion de mutations), y un
+# campo Native SQL no ve los cambios de otro campo de la MISMA mutation (hallazgo de Fase 4).
+# Para aplicar N items de una recepcion de forma atomica (todo-o-nada) sin repetir bloques
+# fijos por item (que no escalaria a un numero arbitrario de items), se usa:
+#
+#   1. Variables GraphQL de tipo LISTA (`[UUID!]!`, `[Float!]!`) — confirmadas soportadas.
+#   2. `UNNEST($1::tipo[], $2::tipo[], ...)` para expandir esas listas en un conjunto de filas
+#      dentro de UNA sola sentencia SQL plana (sin WITH).
+#   3. Una "compuerta" AGREGADA no correlacionada (COUNT(*) de filas que SI cumplen su propio
+#      guard == cantidad total de filas esperadas) aplicada UNIFORMEMENTE a cada sentencia que
+#      escribe: si CUALQUIER item de la lista falla su condicion individual (sobre-recepcion,
+#      producto/orden no coincide, inventario no inicializado), la cuenta agregada no alcanza
+#      el total y NINGUNA fila de NINGUNA sentencia se modifica — atomicidad real de N filas en
+#      N sentencias, generalizando el patron de 2 filas de TransferInventory (Fase 4).
+#   Verificado empiricamente con un probe dedicado antes de escribir este archivo: con 3 items
+#   donde 1 excedia su limite, NINGUNO de los 3 se aplico; con los 3 validos, los 3 se aplicaron
+#   correctamente.
+#
+# Cada sentencia repite la MISMA condicion de compuerta (misma consulta, mismos parametros) —
+# como cada una lee el estado ANTES de que esta mutation escriba nada (ninguna sentencia ve la
+# escritura de otra, por el hallazgo de Fase 4), las N repeticiones de la compuerta siempre
+# evaluan exactamente igual entre si dentro de la misma mutation, garantizando consistencia.
+
+# ---------- CreatePurchaseOrder (purchases.create) ----------
+# orderNumber unico POR SUCURSAL respaldado por un INSERT nativo guardado con "WHERE NOT
+# EXISTS" (atomico, sin el hueco de carrera de un @check de solo lectura) — ver
+# docs/purchasing.md#ordernumber.
+
+mutation CreatePurchaseOrder(
+  $newOrderId: UUID!
+  $branchId: UUID!
+  $supplierId: UUID!
+  $orderNumber: String!
+  $currencyId: UUID!
+  $expectedAt: Timestamp
+  $notes: String
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.create')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && vars.orderNumber.size() > 0 && vars.orderNumber.size() <= 40"
+      message: "Requiere permiso purchases.create, acceso a la sucursal, u orderNumber invalido"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetSupplier: suppliers(where: { id: { eq: $supplierId } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE'"
+      message: "Proveedor inexistente o INACTIVE (no puede usarse para nuevas ordenes)"
+    ) {
+      status
+    }
+    targetCurrency: currencies(where: { id: { eq: $currencyId } }) @check(
+      expr: "this.size() > 0"
+      message: "Moneda invalida (debe existir en el catalogo Currency)"
+    ) {
+      id
+    }
+  }
+  newOrder: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."purchase_order"
+        ("id", "branch_id", "supplier_id", "order_number", "status", "ordered_at", "expected_at", "currency_id", "subtotal", "tax_amount", "discount_amount", "total_amount", "notes", "created_at", "updated_at", "created_by", "updated_by")
+      SELECT $1, $2, $3, $4, 'DRAFT', now(), $5, $6, 0, 0, 0, 0, $7, now(), now(), $8, $9
+      WHERE NOT EXISTS (
+        SELECT 1 FROM "public"."purchase_order" WHERE branch_id = $10 AND order_number = $11
+      )
+      RETURNING id
+    """
+    params: [$newOrderId, $branchId, $supplierId, $orderNumber, $expectedAt, $currencyId, $notes, { _expr: "auth.uid" }, { _expr: "auth.uid" }, $branchId, $orderNumber]
+  )
+  auditLog_insert(data: { action: "PURCHASE_ORDER_CREATED", entityType: "PurchaseOrder", entityId: $newOrderId, branchId: $branchId })
+}
+
+# ---------- UpdatePurchaseOrderDraft (purchases.create) ----------
+# Reemplaza TODOS los items de una orden DRAFT en una sola llamada (el cliente envia la lista
+# completa actual, no un delta) y recalcula subtotal/discountAmount/taxAmount/totalAmount desde
+# los items — nunca confiados del cliente (seccion 10). Solo permitido mientras status=DRAFT
+# (seccion 35): una vez SUBMITTED/APPROVED/PARTIALLY_RECEIVED/RECEIVED, los items quedan
+# congelados frente a esta mutation (el guard de la sentencia lo garantiza, no solo el @check).
+# $usesSupplierProduct (seccion 7): por item, indica si debe validarse contra un SupplierProduct
+# catalogado para (orden.supplier, item.product) — ver el comentario de schema/purchasing.gql
+# sobre por que no se almacena una FK separada (limite de plataforma con keys compuestas).
+# Tambien valida seccion 36: productId debe tener isPurchasable=true.
+
+mutation UpdatePurchaseOrderDraft(
+  $purchaseOrderId: UUID!
+  $branchId: UUID!
+  $expectedAt: Timestamp
+  $notes: String
+  $productIds: [UUID!]!
+  $usesSupplierProduct: [Boolean!]!
+  $quantities: [Float!]!
+  $unitCosts: [Float!]!
+  $discountAmounts: [Float!]!
+  $taxAmounts: [Float!]!
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.create')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && vars.productIds.size() > 0 && vars.productIds.size() == vars.usesSupplierProduct.size() && vars.productIds.size() == vars.quantities.size() && vars.productIds.size() == vars.unitCosts.size() && vars.productIds.size() == vars.discountAmounts.size() && vars.productIds.size() == vars.taxAmounts.size()"
+      message: "Requiere permiso purchases.create, acceso a la sucursal, lista de items vacia, o listas de distinto tamano"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetOrder: purchaseOrders(where: { id: { eq: $purchaseOrderId } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'DRAFT' && this[0].branch.id == vars.branchId"
+      message: "Orden inexistente, no esta en DRAFT, o branchId no coincide con la orden"
+    ) {
+      status
+      branch { id }
+    }
+  }
+  deleteOldItems: _executeReturningFirst(
+    sql: """DELETE FROM "public"."purchase_order_item" WHERE purchase_order_id = $1 RETURNING id"""
+    params: [$purchaseOrderId]
+  )
+  insertItems: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."purchase_order_item"
+        ("id", "purchase_order_id", "product_id", "uses_supplier_product", "ordered_quantity", "received_quantity", "unit_cost", "discount_amount", "tax_amount", "total_amount", "created_at", "updated_at")
+      SELECT uuid_generate_v4(), $1, t.product_id, t.uses_sp, t.qty, 0, t.cost, t.disc, t.tax, (t.qty * t.cost) - t.disc + t.tax, now(), now()
+      FROM UNNEST($2::uuid[], $3::boolean[], $4::numeric[], $5::numeric[], $6::numeric[], $7::numeric[]) AS t(product_id, uses_sp, qty, cost, disc, tax)
+      WHERE (
+        SELECT COUNT(*) FROM UNNEST($8::uuid[], $9::boolean[], $10::numeric[], $11::numeric[], $12::numeric[], $13::numeric[]) AS v(product_id, uses_sp, qty, cost, disc, tax)
+        JOIN "public"."product" p ON p.id = v.product_id AND p.is_purchasable = true
+        LEFT JOIN "public"."supplier_product" sp ON sp.product_id = v.product_id AND sp.supplier_id = (SELECT supplier_id FROM "public"."purchase_order" WHERE id = $14)
+        WHERE v.qty > 0 AND v.cost >= 0 AND v.cost <= 999999.99 AND v.disc >= 0 AND v.tax >= 0
+          AND (v.uses_sp = false OR sp.product_id IS NOT NULL)
+      ) = array_length($15::uuid[], 1)
+      RETURNING id
+    """
+    params: [$purchaseOrderId, $productIds, $usesSupplierProduct, $quantities, $unitCosts, $discountAmounts, $taxAmounts, $productIds, $usesSupplierProduct, $quantities, $unitCosts, $discountAmounts, $taxAmounts, $purchaseOrderId, $productIds]
+  )
+  # HALLAZGO DE PLATAFORMA: los totales se calculan ARITMETICAMENTE desde los arrays de
+  # entrada (via UNNEST), NUNCA desde una subconsulta SUM(...) contra purchase_order_item —
+  # ese campo, al ser una sentencia SEPARADA de "insertItems", no ve las filas que
+  # "insertItems" acaba de insertar en la MISMA mutation (hallazgo de aislamiento entre campos,
+  # Fase 4/5); una subconsulta contra la tabla real habria leido siempre 0 filas.
+  recomputeTotals: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."purchase_order"
+      SET subtotal = COALESCE((SELECT SUM(t.qty * t.cost) FROM UNNEST($1::numeric[], $2::numeric[]) AS t(qty, cost)), 0),
+          discount_amount = COALESCE((SELECT SUM(d) FROM UNNEST($3::numeric[]) AS d), 0),
+          tax_amount = COALESCE((SELECT SUM(x) FROM UNNEST($4::numeric[]) AS x), 0),
+          total_amount = COALESCE((SELECT SUM(t.qty * t.cost - t.disc + t.tax) FROM UNNEST($5::numeric[], $6::numeric[], $7::numeric[], $8::numeric[]) AS t(qty, cost, disc, tax)), 0),
+          expected_at = $9, notes = $10, updated_at = now(), updated_by = $11
+      WHERE id = $12
+        AND (
+          SELECT COUNT(*) FROM UNNEST($13::uuid[], $14::boolean[], $15::numeric[], $16::numeric[], $17::numeric[], $18::numeric[]) AS v(product_id, uses_sp, qty, cost, disc, tax)
+          JOIN "public"."product" p ON p.id = v.product_id AND p.is_purchasable = true
+          LEFT JOIN "public"."supplier_product" sp ON sp.product_id = v.product_id AND sp.supplier_id = (SELECT supplier_id FROM "public"."purchase_order" WHERE id = $19)
+          WHERE v.qty > 0 AND v.cost >= 0 AND v.cost <= 999999.99 AND v.disc >= 0 AND v.tax >= 0
+            AND (v.uses_sp = false OR sp.product_id IS NOT NULL)
+        ) = array_length($20::uuid[], 1)
+      RETURNING id
+    """
+    params: [$quantities, $unitCosts, $discountAmounts, $taxAmounts, $quantities, $unitCosts, $discountAmounts, $taxAmounts, $expectedAt, $notes, { _expr: "auth.uid" }, $purchaseOrderId, $productIds, $usesSupplierProduct, $quantities, $unitCosts, $discountAmounts, $taxAmounts, $purchaseOrderId, $productIds]
+  )
+  auditLog_insert(data: { action: "PURCHASE_ORDER_UPDATED", entityType: "PurchaseOrder", entityId: $purchaseOrderId, branchId: $branchId })
+}
+
+# ---------- Transiciones de estado (seccion 5) ----------
+# Cada transicion esta respaldada por el propio WHERE de la sentencia (no solo por el @check),
+# para que 2 transiciones concurrentes conflictivas (ej. Approve + Cancel simultaneos) se
+# serialicen igual que los guards de stock de Fase 4 — nunca ambas tienen efecto.
+
+mutation SubmitPurchaseOrder($purchaseOrderId: UUID!, $branchId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.submit')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId)"
+      message: "Requiere permiso purchases.submit y acceso a la sucursal"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetOrder: purchaseOrders(where: { id: { eq: $purchaseOrderId } }) @check(
+      expr: "this.size() > 0 && this[0].branch.id == vars.branchId && this[0].status == 'DRAFT'"
+      message: "Orden inexistente, branchId no coincide, o no esta en DRAFT"
+    ) {
+      status
+      branch { id }
+    }
+  }
+  update: _executeReturningFirst(
+    sql: """UPDATE "public"."purchase_order" SET status = 'SUBMITTED', updated_at = now(), updated_by = $1 WHERE id = $2 AND status = 'DRAFT' RETURNING id"""
+    params: [{ _expr: "auth.uid" }, $purchaseOrderId]
+  )
+  auditLog_insert(data: { action: "PURCHASE_ORDER_SUBMITTED", entityType: "PurchaseOrder", entityId: $purchaseOrderId, branchId: $branchId })
+}
+
+# purchases.approve separado de purchases.create/submit (seccion 25/26): prepara segregacion de
+# funciones sin forzar una politica de "4 ojos" rigida (solo ADMIN/SUPER_ADMIN lo tienen en el
+# seed, ver docs/authorization-matrix.md).
+mutation ApprovePurchaseOrder($purchaseOrderId: UUID!, $branchId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.approve')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId)"
+      message: "Requiere permiso purchases.approve y acceso a la sucursal"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetOrder: purchaseOrders(where: { id: { eq: $purchaseOrderId } }) @check(
+      expr: "this.size() > 0 && this[0].branch.id == vars.branchId && this[0].status == 'SUBMITTED'"
+      message: "Orden inexistente, branchId no coincide, o no esta en SUBMITTED"
+    ) {
+      status
+      branch { id }
+    }
+  }
+  update: _executeReturningFirst(
+    sql: """UPDATE "public"."purchase_order" SET status = 'APPROVED', approved_by = $1, approved_at = now(), updated_at = now(), updated_by = $2 WHERE id = $3 AND status = 'SUBMITTED' RETURNING id"""
+    params: [{ _expr: "auth.uid" }, { _expr: "auth.uid" }, $purchaseOrderId]
+  )
+  auditLog_insert(data: { action: "PURCHASE_ORDER_APPROVED", entityType: "PurchaseOrder", entityId: $purchaseOrderId, branchId: $branchId })
+}
+
+# No se permite cancelar RECEIVED, ni PARTIALLY_RECEIVED (seccion 34: sin politica de reversion
+# automatica definida todavia) — solo DRAFT/SUBMITTED/APPROVED.
+mutation CancelPurchaseOrder($purchaseOrderId: UUID!, $branchId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.cancel')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId)"
+      message: "Requiere permiso purchases.cancel y acceso a la sucursal"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetOrder: purchaseOrders(where: { id: { eq: $purchaseOrderId } }) @check(
+      expr: "this.size() > 0 && this[0].branch.id == vars.branchId && this[0].status in ['DRAFT', 'SUBMITTED', 'APPROVED']"
+      message: "Orden inexistente, branchId no coincide, o no puede cancelarse en su estado actual (PARTIALLY_RECEIVED/RECEIVED nunca son cancelables)"
+    ) {
+      status
+      branch { id }
+    }
+  }
+  update: _executeReturningFirst(
+    sql: """UPDATE "public"."purchase_order" SET status = 'CANCELLED', updated_at = now(), updated_by = $1 WHERE id = $2 AND status IN ('DRAFT', 'SUBMITTED', 'APPROVED') RETURNING id"""
+    params: [{ _expr: "auth.uid" }, $purchaseOrderId]
+  )
+  auditLog_insert(data: { action: "PURCHASE_ORDER_CANCELLED", entityType: "PurchaseOrder", entityId: $purchaseOrderId, branchId: $branchId })
+}
+
+# ---------- CreatePurchaseReceipt (purchases.receive) ----------
+# Mutation UNICA e inequivoca (seccion 23): crea la recepcion Y la aplica a Inventory en la
+# MISMA llamada — no existe un estado intermedio de "recepcion guardada pero no aplicada".
+# Reutiliza EXACTAMENTE la misma formula de costo promedio ponderado y el mismo patron de
+# guard atomico que ReceiveInventory (Fase 4); no se pudo reutilizar la mutation en si (Data
+# Connect no compone mutations, seccion 15), asi que esta mutation reimplementa el mismo
+# calculo inline para el caso multi-item.
+
+mutation CreatePurchaseReceipt(
+  $newReceiptId: UUID!
+  $purchaseOrderId: UUID!
+  $branchId: UUID!
+  $supplierId: UUID!
+  $receiptNumber: String!
+  $currencyId: UUID!
+  $notes: String
+  $idempotencyKey: String
+  $purchaseOrderItemIds: [UUID!]!
+  $productIds: [UUID!]!
+  $quantities: [Float!]!
+  $unitCosts: [Float!]!
+) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'purchases.receive')) && this[0].userBranches_on_userProfile.exists(ub, ub.branch.id == vars.branchId) && vars.purchaseOrderItemIds.size() > 0 && vars.purchaseOrderItemIds.size() == vars.productIds.size() && vars.purchaseOrderItemIds.size() == vars.quantities.size() && vars.purchaseOrderItemIds.size() == vars.unitCosts.size()"
+      message: "Requiere permiso purchases.receive, acceso a la sucursal, lista de items vacia, o listas de distinto tamano"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+      userBranches_on_userProfile { branch { id } }
+    }
+    targetOrder: purchaseOrders(where: { id: { eq: $purchaseOrderId } }) @check(
+      expr: "this.size() > 0 && this[0].branch.id == vars.branchId && this[0].supplier.id == vars.supplierId && this[0].status in ['APPROVED', 'PARTIALLY_RECEIVED']"
+      message: "Orden inexistente, branchId/supplierId no coincide, o no esta APPROVED/PARTIALLY_RECEIVED"
+    ) {
+      status
+      branch { id }
+      supplier { id }
+    }
+  }
+  receipt: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."purchase_receipt"
+        ("id", "purchase_order_id", "branch_id", "supplier_id", "receipt_number", "received_at", "currency_id", "notes", "created_at", "created_by", "idempotency_key")
+      SELECT $1, $2, $3, $4, $5, now(), $6, $7, now(), $8, $9
+      WHERE (
+        SELECT COUNT(*) FROM UNNEST($10::uuid[], $11::uuid[], $12::numeric[]) AS v(poi_id, prod_id, qty)
+        JOIN "public"."purchase_order_item" poi ON poi.id = v.poi_id AND poi.purchase_order_id = $13 AND poi.product_id = v.prod_id
+        JOIN "public"."inventory" inv ON inv.product_id = v.prod_id AND inv.branch_id = $14
+        WHERE v.qty > 0 AND poi.received_quantity + v.qty <= poi.ordered_quantity
+      ) = array_length($15::uuid[], 1)
+      RETURNING id
+    """
+    params: [$newReceiptId, $purchaseOrderId, $branchId, $supplierId, $receiptNumber, $currencyId, $notes, { _expr: "auth.uid" }, $idempotencyKey, $purchaseOrderItemIds, $productIds, $quantities, $purchaseOrderId, $branchId, $purchaseOrderItemIds]
+  )
+  receiptItems: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."purchase_receipt_item"
+        ("id", "purchase_receipt_id", "purchase_order_item_id", "product_id", "received_quantity", "unit_cost", "created_at")
+      SELECT uuid_generate_v4(), $1, t.poi_id, t.prod_id, t.qty, t.cost, now()
+      FROM UNNEST($2::uuid[], $3::uuid[], $4::numeric[], $5::numeric[]) AS t(poi_id, prod_id, qty, cost)
+      WHERE (
+        SELECT COUNT(*) FROM UNNEST($6::uuid[], $7::uuid[], $8::numeric[]) AS v(poi_id, prod_id, qty)
+        JOIN "public"."purchase_order_item" poi ON poi.id = v.poi_id AND poi.purchase_order_id = $9 AND poi.product_id = v.prod_id
+        JOIN "public"."inventory" inv ON inv.product_id = v.prod_id AND inv.branch_id = $10
+        WHERE v.qty > 0 AND poi.received_quantity + v.qty <= poi.ordered_quantity
+      ) = array_length($11::uuid[], 1)
+      RETURNING id
+    """
+    params: [$newReceiptId, $purchaseOrderItemIds, $productIds, $quantities, $unitCosts, $purchaseOrderItemIds, $productIds, $quantities, $purchaseOrderId, $branchId, $purchaseOrderItemIds]
+  )
+  poItemUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."purchase_order_item" poi
+      SET received_quantity = poi.received_quantity + t.qty, updated_at = now()
+      FROM UNNEST($1::uuid[], $2::uuid[], $3::numeric[]) AS t(poi_id, prod_id, qty)
+      WHERE poi.id = t.poi_id AND poi.purchase_order_id = $4 AND poi.product_id = t.prod_id
+        AND (
+          SELECT COUNT(*) FROM UNNEST($5::uuid[], $6::uuid[], $7::numeric[]) AS v(poi_id, prod_id, qty)
+          JOIN "public"."purchase_order_item" poi2 ON poi2.id = v.poi_id AND poi2.purchase_order_id = $8 AND poi2.product_id = v.prod_id
+          JOIN "public"."inventory" inv ON inv.product_id = v.prod_id AND inv.branch_id = $9
+          WHERE v.qty > 0 AND poi2.received_quantity + v.qty <= poi2.ordered_quantity
+        ) = array_length($10::uuid[], 1)
+      RETURNING id
+    """
+    params: [$purchaseOrderItemIds, $productIds, $quantities, $purchaseOrderId, $purchaseOrderItemIds, $productIds, $quantities, $purchaseOrderId, $branchId, $purchaseOrderItemIds]
+  )
+  inventoryUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."inventory" i
+      SET average_cost = CASE WHEN i.quantity = 0 THEN t.cost ELSE (i.quantity * COALESCE(i.average_cost, 0) + t.qty * t.cost) / (i.quantity + t.qty) END,
+          quantity = i.quantity + t.qty,
+          last_movement_at = now(), updated_at = now(), updated_by = $1
+      FROM UNNEST($2::uuid[], $3::numeric[], $4::numeric[]) AS t(prod_id, qty, cost)
+      WHERE i.product_id = t.prod_id AND i.branch_id = $5
+        AND (
+          SELECT COUNT(*) FROM UNNEST($6::uuid[], $7::uuid[], $8::numeric[]) AS v(poi_id, prod_id, qty)
+          JOIN "public"."purchase_order_item" poi ON poi.id = v.poi_id AND poi.purchase_order_id = $9 AND poi.product_id = v.prod_id
+          JOIN "public"."inventory" inv ON inv.product_id = v.prod_id AND inv.branch_id = $10
+          WHERE v.qty > 0 AND poi.received_quantity + v.qty <= poi.ordered_quantity
+        ) = array_length($11::uuid[], 1)
+      RETURNING id
+    """
+    params: [{ _expr: "auth.uid" }, $productIds, $quantities, $unitCosts, $branchId, $purchaseOrderItemIds, $productIds, $quantities, $purchaseOrderId, $branchId, $purchaseOrderItemIds]
+  )
+  movementInsert: _executeReturningFirst(
+    sql: """
+      INSERT INTO "public"."inventory_movement"
+        ("id", "inventory_product_id", "inventory_branch_id", "product_id", "branch_id", "movement_type", "quantity", "quantity_before", "quantity_after", "unit_cost", "total_cost", "reference_type", "reference_id", "occurred_at", "created_at", "created_by")
+      SELECT uuid_generate_v4(), i.product_id, i.branch_id, i.product_id, i.branch_id, 'PURCHASE_RECEIPT',
+        t.qty, i.quantity, i.quantity + t.qty, t.cost, (t.qty * t.cost), 'PURCHASE_RECEIPT', $1, now(), now(), $2
+      FROM UNNEST($3::uuid[], $4::numeric[], $5::numeric[]) AS t(prod_id, qty, cost)
+      JOIN "public"."inventory" i ON i.product_id = t.prod_id AND i.branch_id = $6
+      WHERE (
+        SELECT COUNT(*) FROM UNNEST($7::uuid[], $8::uuid[], $9::numeric[]) AS v(poi_id, prod_id, qty)
+        JOIN "public"."purchase_order_item" poi ON poi.id = v.poi_id AND poi.purchase_order_id = $10 AND poi.product_id = v.prod_id
+        JOIN "public"."inventory" inv ON inv.product_id = v.prod_id AND inv.branch_id = $11
+        WHERE v.qty > 0 AND poi.received_quantity + v.qty <= poi.ordered_quantity
+      ) = array_length($12::uuid[], 1)
+      RETURNING id
+    """
+    params: [$newReceiptId, { _expr: "auth.uid" }, $productIds, $quantities, $unitCosts, $branchId, $purchaseOrderItemIds, $productIds, $quantities, $purchaseOrderId, $branchId, $purchaseOrderItemIds]
+  )
+  poStatusUpdate: _executeReturningFirst(
+    sql: """
+      UPDATE "public"."purchase_order" po
+      SET status = CASE
+            WHEN (SELECT COALESCE(SUM(ordered_quantity), 0) FROM "public"."purchase_order_item" WHERE purchase_order_id = $1)
+                 <= (SELECT COALESCE(SUM(received_quantity), 0) FROM "public"."purchase_order_item" WHERE purchase_order_id = $2)
+                    + (SELECT COALESCE(SUM(q), 0) FROM UNNEST($3::numeric[]) AS q)
+            THEN 'RECEIVED' ELSE 'PARTIALLY_RECEIVED'
+          END,
+          updated_at = now(), updated_by = $4
+      WHERE po.id = $5
+        AND (
+          SELECT COUNT(*) FROM UNNEST($6::uuid[], $7::uuid[], $8::numeric[]) AS v(poi_id, prod_id, qty)
+          JOIN "public"."purchase_order_item" poi ON poi.id = v.poi_id AND poi.purchase_order_id = $9 AND poi.product_id = v.prod_id
+          JOIN "public"."inventory" inv ON inv.product_id = v.prod_id AND inv.branch_id = $10
+          WHERE v.qty > 0 AND poi.received_quantity + v.qty <= poi.ordered_quantity
+        ) = array_length($11::uuid[], 1)
+      RETURNING id
+    """
+    params: [$purchaseOrderId, $purchaseOrderId, $quantities, { _expr: "auth.uid" }, $purchaseOrderId, $purchaseOrderItemIds, $productIds, $quantities, $purchaseOrderId, $branchId, $purchaseOrderItemIds]
+  )
+  auditLog_insert(data: { action: "PURCHASE_RECEIPT_CREATED", entityType: "PurchaseReceipt", entityId: $newReceiptId, branchId: $branchId })
+  auditLog2: auditLog_insert(data: { action: "PURCHASE_RECEIPT_APPLIED", entityType: "PurchaseReceipt", entityId: $newReceiptId, branchId: $branchId })
+}

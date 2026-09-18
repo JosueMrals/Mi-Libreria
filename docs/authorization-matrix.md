@@ -23,6 +23,10 @@ La matriz puede modificarse después con `AssignPermissionToRole`/`RemovePermiss
 | purchases.read | ✔ | ✔ | ✔ | | ✔ | | |
 | purchases.create | ✔ | ✔ | ✔ | | ✔ | | |
 | purchases.update | ✔ | ✔ | ✔ | | | | |
+| purchases.submit | ✔ | ✔ | ✔ | | ✔ | | |
+| purchases.approve | ✔ | ✔ | | | | | |
+| purchases.cancel | ✔ | ✔ | ✔ | | | | |
+| purchases.receive | ✔ | ✔ | ✔ | | ✔ | | |
 | customers.read | ✔ | ✔ | ✔ | ✔ | | ✔ | |
 | customers.create | ✔ | ✔ | ✔ | | | ✔ | |
 | customers.update | ✔ | ✔ | ✔ | | | | |
@@ -114,6 +118,26 @@ denegando incluso el caso más común (cliente usa el default del schema sin pas
 patrón correcto es `!has(vars.limit) || vars.limit == null || ...`. Aplica a cualquier check que
 referencie una variable opcional, no solo a paginación — ver `docs/catalog.md` y
 `docs/security.md`.
+
+## Fase 5: purchases.submit/approve/cancel/receive nuevos — segregación de funciones preparada
+
+`purchases.read`/`create`/`update` ya existían como placeholders de Fase 2. Se agregaron
+`purchases.submit`, `purchases.approve`, `purchases.cancel`, `purchases.receive`.
+
+**`purchases.approve` es el único permiso de esta fase otorgado a un subconjunto MÁS
+restringido que `purchases.create`**: solo `SUPER_ADMIN`/`ADMIN` — ni siquiera `MANAGER` (que
+sí tiene `create`/`submit`/`receive`) puede aprobar. Esto prepara segregación de funciones
+(sección 26: "Creator ≠ Approver ≠ Receiver") sin forzarla como política rígida — un `ADMIN`
+individual todavía podría crear y aprobar la misma orden si actuara en ambos pasos, pero el
+modelo ya permite que el negocio lo restrinja más adelante (ej. quitándole `purchases.create`
+a quienes solo deban aprobar) sin ningún cambio de schema ni de mutations. Verificado con
+prueba E2E: `MANAGER` intentando aprobar su propia orden → DENIED.
+
+`purchases.submit`/`purchases.receive` se otorgaron al mismo tier que `purchases.create`
+(`SUPER_ADMIN`/`ADMIN`/`MANAGER`/`INVENTORY`) — quien puede crear una orden también puede
+someterla y recibir su mercancía, consistente con el flujo operativo normal de una sucursal.
+`purchases.cancel` se otorgó al mismo tier que `purchases.update` (`SUPER_ADMIN`/`ADMIN`/
+`MANAGER`, sin `INVENTORY`).
 
 ## Fase 4: inventory.receive/return/transfer nuevos; inventory.create evaluado y descartado
 

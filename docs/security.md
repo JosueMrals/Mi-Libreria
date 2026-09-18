@@ -359,6 +359,36 @@ SQL no ve los cambios que otro campo de la MISMA mutation ya escribió, aunque `
 sigue revirtiendo todo ante una excepción real. Documentado en detalle, con la verificación
 empírica exacta (xmin/pg_current_xact_id), en `docs/inventory.md#límite-de-plataforma-aislamiento-entre-campos-de-una-misma-mutation`.
 
+### Fase 5 (Purchasing & Procurement Core) — 60/60
+
+Mismo mecanismo de pruebas, contra `dataconnect/purchasing/*.gql` (connector `purchasing`).
+Categorías: PurchaseOrder 18/18, PurchaseOrderItem 5/5, Receiving 11/11, Receiving atomicity
+3/3, **Concurrency 3/3**, **Idempotency 1/1**, Branch isolation 3/3, Authorization 8/8,
+Queries 6/6, Audit 2/2.
+
+**Over-receiving bajo concurrencia real verificado**: PO item `ordered=10, alreadyReceived=7`,
+dos requests de `3` disparados con `Promise.all` (no secuencial) — exactamente uno tuvo éxito,
+`received` final fue exactamente `10`, nunca `13`. **Idempotencia bajo concurrencia real**: 3
+llamadas idénticas (misma `idempotencyKey`) vía `Promise.all` — exactamente un efecto lógico,
+stock incrementado una sola vez. **Atomicidad de recepción multi-item**: con 1 de 2 productos
+excediendo su remanente, ninguno de los 2 se aplicó (ni el válido).
+
+**Segregación de funciones verificada**: `MANAGER` (creador/submitter de una orden, con
+`purchases.create`/`purchases.submit` pero SIN `purchases.approve`) no puede auto-aprobar su
+propia orden — probado explícitamente.
+
+**Regresión:** Fase 2 (15/15), Fase 2.1 (41/41), Catálogo F3+F3.1 (63/63) y Fase 4 (73/73) se
+re-ejecutaron completas en la MISMA corrida de emulador que Fase 5, sin reiniciar entre suites.
+
+**Total combinado: 15 + 41 + 63 + 73 + 60 = 252/252.**
+
+**Hallazgos de plataforma nuevos** (detalle completo en `docs/purchasing.md`): (1) un campo de
+recálculo de totales/estado no puede leer `SUM(...)` de filas que otro campo de la misma
+mutation acaba de escribir (generalización del hallazgo de aislamiento de Fase 4 a agregaciones);
+(2) encadenar dos o más campos `_execute` **sin** `RETURNING` en la misma mutation rompe el
+protocolo del emulador, mitigado usando `_executeReturningFirst` con `RETURNING` explícito en
+todo campo de escritura Native SQL del connector `purchasing`.
+
 ### Lección de plataforma (Fase 3): variables opcionales omitidas en CEL
 
 Se descubrió, corrigió y verificó un patrón de bug real: cualquier `@check`/`@auth(expr:...)`

@@ -1,0 +1,113 @@
+# Fase 5 — Purchasing & Procurement Core.
+#
+# Principio (seccion 1/2): PurchaseOrder es un documento/intencion comercial, NUNCA modifica
+# Inventory directamente. Solo una PurchaseReceipt (recepcion fisica real) genera
+# InventoryMovement y actualiza Inventory.quantity — reutilizando exactamente la misma
+# estrategia atomica de Fase 4 (UPDATE guardado por WHERE, costo promedio ponderado en la misma
+# sentencia, idempotencyKey UNIQUE real).
+#
+#   PurchaseOrder → PurchaseOrderItem → PurchaseReceipt → PurchaseReceiptItem → Inventory
+#
+# Supplier/SupplierProduct (Fase 3) se REUTILIZAN sin cambios — ver docs/purchasing.md.
+
+# ---------- PurchaseOrder ----------
+#
+# orderNumber: unico POR SUCURSAL (seccion 40, "no asumir global si el negocio numera por
+# sucursal"), no globalmente. Data Connect no expone un UNIQUE compuesto secundario fuera de la
+# key primaria de la tabla (mismo limite de plataforma ya documentado en Fase 3/4 para FKs
+# compuestas) — en vez de forzar (branch,orderNumber) como PK primaria (lo que complicaria toda
+# FK de PurchaseOrderItem/PurchaseReceipt hacia PurchaseOrder), la unicidad por sucursal se
+# respalda con un INSERT nativo guardado por "WHERE NOT EXISTS" (atomico, sin el hueco de
+# carrera de un @check de solo lectura) — ver CreatePurchaseOrder en mutations.gql y
+# docs/purchasing.md#ordernumber para el detalle completo de esta decision.
+type PurchaseOrder @table {
+  id: UUID! @default(expr: "uuidV4()")
+  branch: Branch!
+  supplier: Supplier!
+  orderNumber: String! @col(dataType: "varchar(40)")
+  # DRAFT | SUBMITTED | APPROVED | PARTIALLY_RECEIVED | RECEIVED | CANCELLED
+  status: String! @col(dataType: "varchar(20)")
+  orderedAt: Timestamp! @default(expr: "request.time")
+  expectedAt: Timestamp
+  currency: Currency!
+  # Nunca confiados del cliente (seccion 10): recalculados en servidor desde
+  # PurchaseOrderItem cada vez que UpdatePurchaseOrderDraft reemplaza los items.
+  subtotal: Float! @col(dataType: "numeric(12,2)")
+  taxAmount: Float! @col(dataType: "numeric(12,2)")
+  discountAmount: Float! @col(dataType: "numeric(12,2)")
+  totalAmount: Float! @col(dataType: "numeric(12,2)")
+  notes: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+  createdBy: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+  updatedBy: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+  # Segregacion de funciones (seccion 26): quien aprueba puede ser distinto de quien crea.
+  # Nunca aceptado como variable de cliente — siempre auth.uid en ApprovePurchaseOrder.
+  approvedBy: String @col(dataType: "varchar(128)")
+  approvedAt: Timestamp
+}
+
+# receivedQuantity se actualiza EXCLUSIVAMENTE por CreatePurchaseReceipt (guard atomico, seccion
+# 31/32) — nunca por una mutation generica de edicion de items una vez que la orden dejo DRAFT.
+#
+# HALLAZGO DE PLATAFORMA (seccion 7): SupplierProduct no tiene columna "id" propia — su
+# identidad ES la key compuesta (supplier, product). Data Connect rechaza un @ref hacia esa key
+# compuesta ("Reference another reference field SupplierProduct.supplier") porque
+# PurchaseOrderItem no tiene un campo local "supplier" propio con el que emparejar esa mitad de
+# la key (a diferencia de InventoryMovement.inventory en Fase 4, que SI reutilizaba sus propios
+# campos "product"/"branch" ya declarados). Anadir un campo "supplier" redundante solo para
+# habilitar la FK se descarto (complejidad no justificada). En su lugar: el SupplierProduct
+# relevante para un item es SIEMPRE derivable sin ambiguedad como (PurchaseOrder.supplier,
+# item.product) — no existe otra combinacion valida posible, asi que no hace falta almacenar
+# una FK separada. `usesSupplierProduct: Boolean` es solo la INTENCION del cliente ("este item
+# debe validarse contra un SupplierProduct catalogado"); la validacion real (que esa fila
+# exista para el supplier de la orden) se hace en Native SQL al escribir el item — ver
+# docs/purchasing.md#supplierproduct. Esto ademas hace estructuralmente IMPOSIBLE el ejemplo de
+# cruce invalido de la seccion 7 (nunca se acepta un supplierId distinto al de la orden).
+type PurchaseOrderItem @table {
+  id: UUID! @default(expr: "uuidV4()")
+  purchaseOrder: PurchaseOrder!
+  product: Product!
+  usesSupplierProduct: Boolean!
+  orderedQuantity: Float! @col(dataType: "numeric(14,3)")
+  receivedQuantity: Float! @col(dataType: "numeric(14,3)")
+  unitCost: Float! @col(dataType: "numeric(12,2)")
+  discountAmount: Float! @col(dataType: "numeric(12,2)")
+  taxAmount: Float! @col(dataType: "numeric(12,2)")
+  totalAmount: Float! @col(dataType: "numeric(12,2)")
+  notes: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  updatedAt: Timestamp! @default(expr: "request.time")
+}
+
+# Una PurchaseOrder puede tener multiples PurchaseReceipt (seccion 11: recepciones parciales).
+# idempotencyKey UNIQUE real (seccion 18): un reintento de red hace fallar el INSERT del
+# receipt -> @transaction revierte TODO, incluyendo cualquier actualizacion de Inventory que
+# ese mismo intento ya hubiera aplicado — identico mecanismo a Fase 4.
+type PurchaseReceipt @table {
+  id: UUID! @default(expr: "uuidV4()")
+  purchaseOrder: PurchaseOrder!
+  branch: Branch!
+  supplier: Supplier!
+  receiptNumber: String! @col(dataType: "varchar(40)")
+  receivedAt: Timestamp! @default(expr: "request.time")
+  currency: Currency!
+  notes: String
+  createdAt: Timestamp! @default(expr: "request.time")
+  createdBy: String! @default(expr: "auth.uid") @col(dataType: "varchar(128)")
+  idempotencyKey: String @unique @col(dataType: "varchar(100)")
+}
+
+# Append-only de facto (seccion 17/24): sin mutation Update/Delete publicada. unitCost/quantity
+# quedan congelados en el momento de la recepcion — una correccion posterior requiere una
+# operacion explicita nueva (fuera de alcance de esta fase, documentado como decision
+# pendiente), nunca editar esta fila.
+type PurchaseReceiptItem @table {
+  id: UUID! @default(expr: "uuidV4()")
+  purchaseReceipt: PurchaseReceipt!
+  purchaseOrderItem: PurchaseOrderItem!
+  product: Product!
+  receivedQuantity: Float! @col(dataType: "numeric(14,3)")
+  unitCost: Float! @col(dataType: "numeric(12,2)")
+  createdAt: Timestamp! @default(expr: "request.time")
+}

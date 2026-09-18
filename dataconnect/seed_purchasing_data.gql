@@ -1,0 +1,13 @@
+# Fase 5 — Purchasing & Procurement Core: seed.
+#
+# DECISION (seccion 38, "solo si se necesitan datos de prueba"): este archivo NO siembra filas
+# de PurchaseOrder/PurchaseReceipt. Mismo motivo exacto documentado en Fase 3
+# (Product/BookDetails/ProductPrice) y Fase 4 (Inventory): estas tablas usan
+# `@default(expr: "auth.uid")` en createdBy, que Data Connect evalua SIEMPRE — falla sin un
+# usuario impersonado, que es exactamente el contexto de "firebase dataconnect:execute" (admin
+# puro, sin auth.uid). No hay tampoco catalogo de referencia abierto propio de esta fase.
+#
+# Los datos de compras para pruebas se crean con las mutations reales
+# (CreatePurchaseOrder/UpdatePurchaseOrderDraft/.../CreatePurchaseReceipt) impersonando un
+# usuario de prueba, igual que Fase 3/4 crean sus propios datos de prueba en sus scripts de
+# test en vez de en el seed.

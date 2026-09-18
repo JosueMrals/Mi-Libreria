@@ -24,6 +24,7 @@ IDENTITY_OPS=(
   SeedRolePermission1 SeedRolePermission2 SeedRolePermission3 SeedRolePermission4
   SeedRolePermission5 SeedRolePermission6 SeedRolePermission7 SeedRolePermission8
   SeedRolePermission9 SeedRolePermission10 SeedRolePermission11 SeedRolePermission12
+  SeedRolePermission13
 )
 CATALOG_OPS=(
   SeedProductType SeedUnitOfMeasure SeedUnitConversion SeedCurrency SeedTaxCategory
@@ -49,4 +50,6 @@ echo "=== Catalog seed ==="
 run dataconnect/seed_catalog_data.gql "${CATALOG_OPS[@]}"
 echo "=== Inventory seed ==="
 echo "(sin mutations: Inventory.createdBy/updatedBy exigen auth.uid real, ver seed_inventory_data.gql)"
+echo "=== Purchasing seed ==="
+echo "(sin mutations: PurchaseOrder/PurchaseReceipt.createdBy exigen auth.uid real, ver seed_purchasing_data.gql)"
 echo "OK: seed completo (idempotente, se puede volver a correr)."

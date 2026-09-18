@@ -83,6 +83,25 @@ real (`Promise.allSettled`), no solo secuencial. Reutiliza el mismo modelo de se
 en código. Detalle completo del modelo, la estrategia de concurrencia y los hallazgos de
 plataforma en `docs/inventory.md`.
 
+## Fase 5 — Purchasing & Procurement Core
+
+Sobre `Supplier`/`SupplierProduct` (Fase 3) e `Inventory`/`InventoryMovement` (Fase 4) se
+construyó el núcleo de compras:
+
+```
+Supplier → PurchaseOrder → PurchaseOrderItem → PurchaseReceipt → PurchaseReceiptItem
+                                                       ↓
+                                    InventoryMovement(PURCHASE_RECEIPT) → Inventory.quantity
+```
+
+`PurchaseOrder` es un documento/intención comercial que nunca toca `Inventory` directamente;
+solo `PurchaseReceipt` (recepción física confirmada) genera el movimiento. Reto técnico central:
+Data Connect no permite componer mutations, así que aplicar un número arbitrario de items de
+una recepción de forma atómica requirió generalizar el patrón de guard de Fase 4 usando
+variables GraphQL de tipo lista + `UNNEST` + una compuerta agregada — verificado con
+concurrencia real antes de construir la mutation completa. Detalle completo, incluyendo el
+hallazgo de plataforma sobre `_execute` sin `RETURNING`, en `docs/purchasing.md`.
+
 ## Delimitación del alcance
 
 No se crea aún:
@@ -93,5 +112,5 @@ No se crea aún:
 - Tauri
 - ASP.NET Core
 - REST API propia
-- Sales/Purchase/Customer completos (ventas y compras — Fase 5/6)
+- Sales/Customer/pagos/cuentas por pagar/contabilidad (Fase 6+)
 - FIFO/LIFO, lotes, números de serie, warehouse management avanzado

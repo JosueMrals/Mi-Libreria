@@ -106,6 +106,27 @@ Product (GLOBAL, Fase 3)
 `ProductVariantOptionValue`, Fase 3) donde el nombre de constraint FK auto-generado excede el
 límite de Postgres por apuntar a una key compuesta — mismo `@ref(constraintName:)` explícito.
 
+## Modelo de Purchasing & Procurement Core (Fase 5)
+
+Definido en `dataconnect/schema/purchasing.gql`. Detalle completo (atomicidad multi-item,
+concurrencia, hallazgos de plataforma) en `docs/purchasing.md`.
+
+```
+Supplier (Fase 3)
+   └── PurchaseOrder (PK simple; orderNumber unico por sucursal via INSERT...WHERE NOT EXISTS)
+          └── PurchaseOrderItem
+                 └── PurchaseReceipt (idempotencyKey UNIQUE real)
+                        └── PurchaseReceiptItem
+                               └── InventoryMovement(PURCHASE_RECEIPT) → Inventory (Fase 4)
+```
+
+| Tabla | Campos clave | Notas |
+|---|---|---|
+| `PurchaseOrder` | `id` (PK), `branch`/`supplier`/`currency` (FK), `status` (dominio cerrado de 6 valores) | Totales (`subtotal`/`taxAmount`/`discountAmount`/`totalAmount`) siempre recalculados en servidor desde items, nunca del cliente. |
+| `PurchaseOrderItem` | `id` (PK), `purchaseOrder`/`product` (FK), `usesSupplierProduct` (Boolean) | Sin FK propia hacia `SupplierProduct` (ver `docs/purchasing.md#supplierproduct` — límite de plataforma con su key compuesta). |
+| `PurchaseReceipt` | `id` (PK), `purchaseOrder`/`branch`/`supplier` (FK), `idempotencyKey` (`UNIQUE`, nullable) | Una orden puede tener múltiples receipts (recepciones parciales). |
+| `PurchaseReceiptItem` | `id` (PK), `purchaseReceipt`/`purchaseOrderItem`/`product` (FK) | Append-only de facto: sin mutation `_update`/`_delete`. |
+
 ## Reglas futuras
 
 - Usar `NUMERIC/DECIMAL` para dinero (Fase 1, sección 17): aplicado en `ProductPrice.amount` y

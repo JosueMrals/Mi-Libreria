@@ -230,6 +230,49 @@ Ajustes/devoluciones/transferencias permanecen permitidos independientemente del
 (corregir un conteo físico existente debe funcionar siempre) — decisión explícita, ver
 `docs/inventory.md`.
 
+## Amenazas de Purchasing & Procurement Core (Fase 5)
+
+## 23. Over-receiving (recibir más de lo ordenado)
+
+**Impacto:** dos recepciones concurrentes contra el mismo `PurchaseOrderItem` que, si ambas
+tuvieran éxito, sumarían más de lo ordenado — inflando `Inventory.quantity` con stock que
+nunca fue realmente comprado/recibido.
+**Mitigación:** misma estrategia que el guard de stock de Fase 4, generalizada a N items vía
+una compuerta agregada (`COUNT(*)` de items que cumplen `received + solicitado <= ordered`
+comparado contra el total esperado) evaluada dentro de la sentencia `UPDATE` atómica — nunca
+`SELECT remaining; calcular en cliente; UPDATE`. Probado con paralelismo real: exactamente una
+de dos recepciones concurrentes de 3 unidades (con solo 3 de margen) tuvo éxito.
+
+## 24. Orden de compra que modifica Inventory directamente
+
+**Impacto:** una `PurchaseOrder` (documento/intención, aún no confirmado físicamente) que
+altera el stock antes de que la mercancía realmente llegue, desincronizando el inventario de
+la realidad física.
+**Mitigación:** ninguna mutation de `PurchaseOrder` (`Create`/`Update`/`Submit`/`Approve`/
+`Cancel`) toca `Inventory`/`InventoryMovement` en absoluto — solo `CreatePurchaseReceipt`
+(recepción física confirmada) lo hace. Verificado por inspección de código y por prueba: crear/
+aprobar una orden nunca cambia `Inventory.quantity`.
+
+## 25. Recepción de mercancía en la sucursal o del proveedor equivocado
+
+**Impacto:** una `PurchaseReceipt` que declara una sucursal o proveedor distinto al de la
+`PurchaseOrder` que dice satisfacer, aplicando el movimiento de inventario en el lugar
+equivocado o atribuyéndolo a un proveedor incorrecto.
+**Mitigación:** `CreatePurchaseReceipt` exige `PurchaseOrder.branchId == vars.branchId` y
+`PurchaseOrder.supplierId == vars.supplierId` en su `@check` — ninguno de los dos puede
+divergir del documento origen. Probado: receipt con `branchId`/`supplierId` distinto al de la
+orden → DENIED en ambos casos.
+
+## 26. Auto-aprobación por el mismo usuario que creó/sometió la orden
+
+**Impacto:** un usuario que crea y somete una orden de compra también la aprueba, sin ningún
+control independiente — riesgo de fraude o error no detectado en compras de valor alto.
+**Mitigación:** `purchases.approve` es un permiso separado de `purchases.create`/
+`purchases.submit`, otorgado únicamente a `SUPER_ADMIN`/`ADMIN` en el seed — `MANAGER` (que sí
+puede crear/someter/recibir) no puede aprobar. No es una política rígida de "4 ojos" forzada,
+pero la arquitectura ya lo permite sin cambios de modelo. Probado: `MANAGER` intentando aprobar
+su propia orden → DENIED.
+
 ## Riesgos pendientes (no bloqueantes para cerrar la fase)
 
 - `AUTH_LOGIN_FAILED`/`SECURITY_ACCESS_DENIED` (sección 24 del prompt) **no** tienen una
@@ -273,6 +316,15 @@ Ajustes/devoluciones/transferencias permanecen permitidos independientemente del
 - **[Fase 4]** Agregación de inventario "todas mis sucursales en una sola query" no implementada
   — cada query de kardex/listado exige `$branchId` explícito; un usuario multi-sucursal llama
   una vez por sucursal. Pendiente de un patrón `where` server-side verificado.
+- **[Fase 5]** Sin política de reversión para una `PurchaseOrder PARTIALLY_RECEIVED` cancelada
+  — permanece no cancelable hasta que exista una decisión de negocio explícita (sección 34).
+- **[Fase 5]** Sin operación de corrección para una `PurchaseReceipt` ya aplicada (costo/cantidad
+  quedan congelados al momento de la recepción, sección 17) — una corrección requeriría una
+  operación explícita nueva, no implementada todavía.
+- **[Fase 5]** `_execute` sin `RETURNING` rompe el protocolo del emulador al encadenarse con
+  otro campo de escritura en la misma mutation — mitigado usando `_executeReturningFirst` con
+  `RETURNING` en todo el connector `purchasing`; ver `docs/purchasing.md` para el detalle
+  completo del diagnóstico.
 - **[Fase 3]** `ipAddress`/`userAgent`/`correlationId` de `AuditLog` (limitación heredada de
   Fase 2.1) tampoco se completan para los eventos del catálogo, por la misma razón de
   plataforma ya documentada.

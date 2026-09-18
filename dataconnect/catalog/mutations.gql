@@ -457,6 +457,23 @@ mutation UpdateSupplier($supplierId: UUID!, $name: String, $legalName: String, $
   auditLog_insert(data: { action: "SUPPLIER_UPDATED", entityType: "Supplier", entityId: $supplierId })
 }
 
+# Fase 5, seccion 37: un Supplier INACTIVE no debe poder usarse para nuevas PurchaseOrder
+# (verificado en CreatePurchaseOrder), pero las ordenes historicas de un supplier ya
+# desactivado deben seguir siendo consultables — nunca se borra un Supplier con historial.
+mutation DeactivateSupplier($supplierId: UUID!) @auth(level: USER) @transaction {
+  query @redact {
+    userProfiles(where: { firebaseUid: { eq_expr: "auth.uid" } }) @check(
+      expr: "this.size() > 0 && this[0].status == 'ACTIVE' && this[0].roles_via_UserRole.exists(r, r.permissions_via_RolePermission.exists(p, p.name == 'suppliers.update'))"
+      message: "Requiere permiso suppliers.update"
+    ) {
+      status
+      roles_via_UserRole { permissions_via_RolePermission { name } }
+    }
+  }
+  supplier_update(id: $supplierId, data: { status: "INACTIVE", updatedAt_expr: "request.time" })
+  auditLog_insert(data: { action: "SUPPLIER_UPDATED", entityType: "Supplier", entityId: $supplierId })
+}
+
 # ---------- SupplierProduct (suppliers.update — prepara Compras, Fase 6) ----------
 # Fase 3.1, seccion 25: Supplier y Product deben existir (FK reales); (supplier, product) es
 # la key compuesta de la tabla, asi que un duplicado es rechazado por PostgreSQL, no por logica
